@@ -1,0 +1,20 @@
+services:
+  nova:
+    image: ghcr.io/metanova-labs/nova:latest
+    env_file:
+      - .env
+    args:
+      DEVICE_OVERRIDE: "none" # Change to "cpu" if needed.
+    entrypoint: [ "/scripts/entrypoint.sh" ]
+    command: [ "--logging.debug" ]
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 30 --cleanup --label-enable
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
