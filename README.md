@@ -7,10 +7,15 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
 ## Installation
 > Recommended: Ubuntu 24.04 LTS, Python 3.12
 
-    python3.12 -m venv <your_env>
-    source <your_env>/bin/activate
-    pip install -r requirements1.txt
-    pip install -r requirements2.txt
+    # Install uv
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    
+    # Create and activate virtual environment
+    uv venv 
+    source .venv/bin/activate
+    
+    # Install dependencies
+    uv pip install -r requirements.txt
 
 
 ## Running
@@ -21,7 +26,7 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
 ### For validators: 
 
 1. DM the NOVA team to obtain an API key.
-2. Set validator_api_key=<your_api_key> in your .env file (create it if it doesn’t exist).
+2. Set validator_api_key=<your_api_key> in your .env file (create it if it doesn't exist).
 
 Once that is done run:
 ```
