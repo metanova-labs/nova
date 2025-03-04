@@ -11,3 +11,11 @@ requests==2.32.3
 substrate-interface==1.7.11
 torch==2.4.0
 scikit-learn==1.6.1
+torch-geometric==2.6.1
+torch_cluster==1.6.3
+torch_scatter==2.1.2
+torch_sparse==0.6.18
+torch_spline_conv==1.2.2
+
+
+
