@@ -29,6 +29,6 @@ RUN mkdir -p /scripts
 COPY scripts/entrypoint.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
 
-# Use ENTRYPOINT for flexibility. The default command runs the miner.
+# Use ENTRYPOINT for future flexibility. Run validator
 ENTRYPOINT ["/scripts/entrypoint.sh"]
-CMD ["neurons/miner.py", "--logging.debug"] 
+CMD ["neurons/validator.py", "--logging.debug"] 

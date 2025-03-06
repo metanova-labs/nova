@@ -9,12 +9,12 @@ services:
       WALLET_NAME: ${WALLET_NAME}
       WALLET_HOTKEY: ${WALLET_HOTKEY}
       SUBTENSOR_NETWORK: ${SUBTENSOR_NETWORK}
-      RUN_MODE: ${RUN_MODE}
-      HOST_HOME: ${HOST_HOME}
     entrypoint: [ "/scripts/entrypoint.sh" ]
     command: [ "--logging.debug" ]
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     volumes:
-      - ${HOST_HOME}/.bittensor/wallets/${WALLET_NAME}/hotkeys:/root/.bittensor/wallets/${WALLET_NAME}/hotkeys
+      - ~/.bittensor/wallets:/root/.bittensor/wallets
 
   watchtower:
     image: containrrr/watchtower

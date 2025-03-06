@@ -4,20 +4,8 @@ set -e
 # Download model file from huggingface to avoid errors
 wget -O PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt
 
-# Determine which script to run based on RUN_MODE (default to miner if not set)
-if [ -z "$RUN_MODE" ]; then
-    echo "RUN_MODE not set, defaulting to miner."
-    SCRIPT="neurons/miner.py"
-elif [ "$RUN_MODE" = "miner" ]; then
-    SCRIPT="neurons/miner.py"
-elif [ "$RUN_MODE" = "validator" ]; then
-    SCRIPT="neurons/validator.py"
-else
-    echo "Unknown RUN_MODE: ${RUN_MODE}. Should be 'miner' or 'validator'."
-    exit 1
-fi
-
 # Build the command-line arguments array
+SCRIPT="neurons/validator.py"
 ARGS=("$@")
 
 # Optional flags if variables are defined in the environment
