@@ -274,14 +274,17 @@ def score_protein_for_all_uids(
 def determine_winner(
     score_dict: dict[int, dict[str, list[float]]],
     uid_to_data: dict[int, dict[str, int]]
-) -> Optional[int]:
+) -> list[int]:
     """
-    Logs target/antitarget scores for each UID, applies tie-breaking by earliest
-    submission block on a final score tie, and returns the winning UID.
-    Returns None if no valid scores are found.
+    Logs target/antitarget scores for each UID, identifies winning UIDs.
+    If multiple UIDs have the same highest score and submitted in the same block,
+    they will all be returned as winners to split the reward.
+    
+    Returns:
+        list[int]: List of winning UIDs. Empty if no valid scores are found.
     """
     best_score = -math.inf
-    best_uid = None
+    tied_winners = []
     best_block_submitted = math.inf  # Track earliest block in tie-break
 
     # Go through each UID scored
@@ -306,36 +309,60 @@ def determine_winner(
         else:
             final_score = -math.inf
 
-        # Log details
+        # Round the final score to 4 decimal places for comparison
+        rounded_final_score = round(final_score, 4) if final_score != -math.inf else -math.inf
+        rounded_best_score = round(best_score, 4) if best_score != -math.inf else -math.inf
+
+        # Log details (use original unrounded score for logging)
         bt.logging.info(
             f"UID={uid} -> target_scores={targets}, "
             f"antitarget_scores={antitargets}, "
-            f"final_score={final_score}, "
+            f"final_score={final_score} (rounded to {rounded_final_score}), "
             f"block_submitted={submission_block}"
         )
 
-        # Tie-break: higher final_score, or if tie, earlier block_submitted
-        if final_score > best_score:
-            best_score = final_score
-            best_uid = uid
+        # Check if this is a new best score (using rounded scores)
+        if rounded_final_score > rounded_best_score:
+            best_score = final_score  # Keep original precision for future comparisons
+            tied_winners = [uid]
             best_block_submitted = submission_block
-        elif final_score == best_score and submission_block < best_block_submitted:
-            best_uid = uid
-            best_block_submitted = submission_block
+        # If it's tied with the current best score (using rounded scores)
+        elif rounded_final_score == rounded_best_score:
+            # If submitted in an earlier block, this one becomes the sole winner
+            if submission_block < best_block_submitted:
+                tied_winners = [uid]
+                best_block_submitted = submission_block
+                best_score = final_score  # Update best_score to this one
+            # If submitted in the same block as our current best, add to the tie list
+            elif submission_block == best_block_submitted:
+                tied_winners.append(uid)
 
     # Log final result
-    if best_uid is not None and best_score != -math.inf:
-        bt.logging.info(
-            f"Winner: UID={best_uid}, "
-            f"molecule={uid_to_data[best_uid]['molecule']}, "
-            f"SMILES={get_smiles(uid_to_data[best_uid]['molecule'])}, "
-            f"block_submitted={best_block_submitted}, "
-            f"winning_score={best_score}"
-        )
+    if tied_winners and best_score != -math.inf:
+        rounded_best_score = round(best_score, 4)
+        if len(tied_winners) == 1:
+            winner_uid = tied_winners[0]
+            bt.logging.info(
+                f"Winner: UID={winner_uid}, "
+                f"molecule={uid_to_data[winner_uid]['molecule']}, "
+                f"SMILES={get_smiles(uid_to_data[winner_uid]['molecule'])}, "
+                f"block_submitted={best_block_submitted}, "
+                f"winning_score={best_score} (rounded to {rounded_best_score})"
+            )
+        else:
+            bt.logging.info(
+                f"Tie detected! {len(tied_winners)} UIDs tied with score {best_score} (rounded to {rounded_best_score}) in block {best_block_submitted}: {tied_winners}"
+            )
+            for winner_uid in tied_winners:
+                bt.logging.info(
+                    f"Tied Winner: UID={winner_uid}, "
+                    f"molecule={uid_to_data[winner_uid]['molecule']}, "
+                    f"SMILES={get_smiles(uid_to_data[winner_uid]['molecule'])}"
+                )
     else:
         bt.logging.info("No valid winner found (all scores -inf or no submissions).")
 
-    return best_uid
+    return tied_winners
 
 
 async def main(config):
@@ -441,28 +468,31 @@ async def main(config):
                         is_target=False
                     )
 
-                winning_uid = determine_winner(score_dict, uid_to_data)
+                winning_uids = determine_winner(score_dict, uid_to_data)
 
-                if winning_uid is not None:
+                if winning_uids:
                     try:
-                        external_script_path =  os.path.abspath(os.path.join(os.path.dirname(__file__), "set_weight_to_uid.py"))
+                        external_script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "set_weight_to_uids.py"))
+                        # Join winning UIDs as comma-separated list
+                        target_uids_str = ",".join(map(str, winning_uids))
+                        
                         cmd = [
                             "python", 
                             external_script_path, 
-                            f"--target_uid={winning_uid}",
+                            f"--target_uids={target_uids_str}",
                             f"--wallet_name={config.wallet.name}",
                             f"--wallet_hotkey={config.wallet.hotkey}",
                         ]
                         bt.logging.info(f"Calling: {' '.join(cmd)}")
                     
                         proc = subprocess.run(cmd, capture_output=True, text=True)
-                        bt.logging.info(f"Output from set_weight_to_uid:\n{proc.stdout}")
-                        bt.logging.info(f"Errors from set_weight_to_uid:\n{proc.stderr}")
+                        bt.logging.info(f"Output from set_weight_to_uids:\n{proc.stdout}")
+                        bt.logging.info(f"Errors from set_weight_to_uids:\n{proc.stderr}")
                         if proc.returncode != 0:
                             bt.logging.error(f"Script returned non-zero exit code: {proc.returncode}")
 
                     except Exception as e:
-                        bt.logging.error(f"Error calling set_weight_to_uid script: {e}")
+                        bt.logging.error(f"Error calling set_weight_to_uids script: {e}")
                 else:
                     bt.logging.warning("No valid molecule commitment found for current epoch.")
                     await asyncio.sleep(1)
