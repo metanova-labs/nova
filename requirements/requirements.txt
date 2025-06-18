@@ -7,6 +7,6 @@ lifelines==0.30.0
 pandas==2.2.3
 python-dotenv==1.0.1
 rdkit==2024.9.4
-requests==2.32.3
+requests==2.32.4
 substrate-interface==1.7.11
 scikit-learn==1.6.1
