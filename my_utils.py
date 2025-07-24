@@ -365,11 +365,11 @@ def monitor_validator(score_dict, metagraph, current_epoch, current_block, valid
             machine_info["cuda_version"] = torch.version.cuda
             machine_info["gpu_name"] = torch.cuda.get_device_name(0)
         
-        best_rounded_score = max([round(d['final_score'], 2) for d in score_dict.values() if 'final_score' in d], default=-math.inf)
+        best_rounded_score = max([round(d['final_score'], 4) for d in score_dict.values() if 'final_score' in d], default=-math.inf)
         
         winning_group = []
         for uid, data in score_dict.items():
-            if 'final_score' in data and round(data['final_score'], 2) == best_rounded_score:
+            if 'final_score' in data and round(data['final_score'], 4) == best_rounded_score:
                 winning_group.append({
                     "uid": uid,
                     "hotkey": metagraph.hotkeys[uid] if uid < len(metagraph.hotkeys) else "unknown",

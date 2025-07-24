@@ -614,7 +614,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
         if 'final_score' not in data:
             continue
             
-        final_score = round(data['final_score'], 2)
+        final_score = round(data['final_score'], 4)
         
         if final_score > best_score:
             best_score = final_score
