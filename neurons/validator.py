@@ -714,7 +714,7 @@ async def main(config):
                     start_block = current_block - config.epoch_length
                     start_block_hash = await subtensor.determine_block_hash(start_block)
                     
-                    current_epoch = current_block // config.epoch_length
+                    current_epoch = (current_block // config.epoch_length) - 1
 
                     proteins = get_challenge_proteins_from_blockhash(
                         block_hash=start_block_hash,
