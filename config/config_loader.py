@@ -30,6 +30,10 @@ def load_config(path: str = "config/config.yaml"):
     molecule_repetition_weight = validation_config["molecule_repetition_weight"]
     molecule_repetition_threshold = validation_config["molecule_repetition_threshold"]
 
+    # Load reaction filtering configuration
+    reaction_config = config["reaction_filtering"]
+    random_valid_reaction = reaction_config["random_valid_reaction"]
+
     return {
         'weekly_target': weekly_target,
         'num_antitargets': num_antitargets,
@@ -44,5 +48,6 @@ def load_config(path: str = "config/config.yaml"):
         'entropy_start_epoch': entropy_start_epoch,
         'entropy_step_size': entropy_step_size,
         'molecule_repetition_weight': molecule_repetition_weight,
-        'molecule_repetition_threshold': molecule_repetition_threshold
+        'molecule_repetition_threshold': molecule_repetition_threshold,
+        'random_valid_reaction': random_valid_reaction
     }
