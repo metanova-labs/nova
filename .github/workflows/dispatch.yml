@@ -1,0 +1,13 @@
+on:
+  push:
+    branches: [ main ]   
+
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh api repos/metanova-labs/data-collection/dispatches \
+               -f event_type=nova_update
+        env:
+          GH_TOKEN: ${{ secrets.TELEMETRY_PAT }} 
