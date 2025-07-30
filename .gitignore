@@ -1,7 +1,7 @@
 __pycache__/
-.*
-!/.gitignore
-venv
+.venv/
+venv/
+.env
 *.log
 *.log.*
 combinatorial_db/molecules.sqlite
