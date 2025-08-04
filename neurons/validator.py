@@ -35,10 +35,11 @@ from my_utils import (
     calculate_dynamic_entropy,
     compute_maccs_entropy,
     find_chemically_identical,
-    get_challenge_proteins_from_blockhash,
+    get_challenge_params_from_blockhash,
     get_heavy_atom_count,
     get_sequence_from_protein_code,
     get_smiles,
+    is_reaction_allowed,
     molecule_unique_for_protein_hf,
     monitor_validator
 )
@@ -245,7 +246,8 @@ def decrypt_submissions(current_commitments: dict) -> tuple[dict, dict]:
 def validate_molecules_and_calculate_entropy(
     uid_to_data: dict[int, dict[str, list]],
     score_dict: dict[int, dict[str, list[list[float]]]],
-    config: dict
+    config: dict,
+    allowed_reaction: str = None
 ) -> dict[int, dict[str, list[str]]]:
     """
     Validates molecules for all UIDs and calculates their MACCS entropy.
@@ -274,6 +276,13 @@ def validate_molecules_and_calculate_entropy(
             
         for molecule in data["molecules"]:
             try:
+                # Check if reaction is allowed this epoch (if filtering enabled)
+                if config.random_valid_reaction and not is_reaction_allowed(molecule, allowed_reaction):
+                    bt.logging.warning(f"UID={uid}, molecule='{molecule}' uses disallowed reaction for this epoch (only {allowed_reaction} allowed)")
+                    valid_smiles = []
+                    valid_names = []
+                    break
+                
                 smiles = get_smiles(molecule)
                 if not smiles:
                     bt.logging.error(f"No valid SMILES found for UID={uid}, molecule='{molecule}'")
@@ -716,13 +725,18 @@ async def main(config):
                     
                     current_epoch = (current_block // config.epoch_length) - 1
 
-                    proteins = get_challenge_proteins_from_blockhash(
+                    challenge_params = get_challenge_params_from_blockhash(
                         block_hash=start_block_hash,
                         weekly_target=config.weekly_target,
-                        num_antitargets=config.num_antitargets
+                        num_antitargets=config.num_antitargets,
+                        include_reaction=config.random_valid_reaction
                     )
-                    target_proteins = proteins["targets"]
-                    antitarget_proteins = proteins["antitargets"]
+                    target_proteins = challenge_params["targets"]
+                    antitarget_proteins = challenge_params["antitargets"]
+                    allowed_reaction = challenge_params.get("allowed_reaction")
+
+                    if allowed_reaction:
+                        bt.logging.info(f"Allowed reaction this epoch: {allowed_reaction}")
 
                     bt.logging.info(f"Scoring using target proteins: {target_proteins}, antitarget proteins: {antitarget_proteins}")
 
@@ -778,7 +792,8 @@ async def main(config):
                 valid_molecules_by_uid = validate_molecules_and_calculate_entropy(
                     uid_to_data=uid_to_data,
                     score_dict=score_dict,
-                    config=config
+                    config=config,
+                    allowed_reaction=allowed_reaction
                 )
 
                 # Count molecule names occurrences

@@ -120,10 +120,11 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         bt.logging.error(f"Error accessing Hugging Face dataset: {e}")
         return None
 
-def get_challenge_proteins_from_blockhash(block_hash: str, weekly_target: str, num_antitargets: int) -> dict:
+def get_challenge_params_from_blockhash(block_hash: str, weekly_target: str, num_antitargets: int, include_reaction: bool = False) -> dict:
     """
     Use block_hash as a seed to pick 'num_targets' and 'num_antitargets' random entries
-    from the 'Metanova/Proteins' dataset. Returns {'targets': [...], 'antitargets': [...]}.
+    from the 'Metanova/Proteins' dataset. Optionally also pick allowed reaction.
+    Returns {'targets': [...], 'antitargets': [...], 'allowed_reaction': '...'}.
     """
     if not (isinstance(block_hash, str) and block_hash.startswith("0x")):
         raise ValueError("block_hash must start with '0x'.")
@@ -159,10 +160,23 @@ def get_challenge_proteins_from_blockhash(block_hash: str, weekly_target: str, n
     targets = [weekly_target]
     antitargets = [dataset[i]["Entry"] for i in antitarget_indices]
 
-    return {
+    result = {
         "targets": targets,
         "antitargets": antitargets
     }
+
+    if include_reaction:
+        try:
+            total_reactions = get_total_reactions()
+            allowed_option = seed % total_reactions
+            if allowed_option == 0:
+                result["allowed_reaction"] = "savi"
+            else:
+                result["allowed_reaction"] = f"rxn:{allowed_option}"
+        except Exception as e:
+            bt.logging.warning(f"Failed to determine allowed reaction: {e}, defaulting to all reactions allowed")
+
+    return result
 
 def get_heavy_atom_count(smiles: str) -> int:
     """
@@ -384,10 +398,53 @@ def monitor_validator(score_dict, metagraph, current_epoch, current_block, valid
             "current_block": current_block,
             "blocks_into_epoch": current_block % 361,
             "validator_hotkey": validator_hotkey,
-            "validator_version": 1.3, #deterministic settings
+            "validator_version": 1.4, #reaction filtering
             "winning_group": winning_group,
             "machine_info": machine_info
         }, headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
         
     except Exception as e:
         bt.logging.debug(f"API send failed: {e}")
+
+def get_total_reactions() -> int:
+    """Query database for total number of reactions, add 1 for savi option."""
+    try:
+        import sqlite3
+        db_path = os.path.join(os.path.dirname(__file__), "combinatorial_db/molecules.sqlite")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM reactions")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count + 1  # +1 for savi option
+    except Exception as e:
+        bt.logging.warning(f"Could not query reaction count: {e}, defaulting to 4")
+        return 4
+
+
+
+def is_reaction_allowed(molecule: str, allowed_reaction: str = None) -> bool:
+    """
+    Check if molecule matches the allowed reaction for this epoch.
+    - If allowed_reaction is None: all molecules allowed (filtering disabled)
+    - If filtering enabled: only molecules matching the allowed_reaction type are allowed
+    """
+    if allowed_reaction is None:
+        return True  
+        
+    if not molecule:
+        return False 
+    
+    if molecule.startswith("rxn:"):
+        try:
+            parts = molecule.split(":")
+            if len(parts) >= 2:
+                rxn_id = int(parts[1])
+                return allowed_reaction == f"rxn:{rxn_id}"
+            return False  # Malformed rxn format
+        except Exception as e:
+            bt.logging.warning(f"Error parsing reaction molecule '{molecule}': {e}")
+            return False
+    else:
+        # Not in reaction format, only allowed if savi is the allowed reaction
+        return allowed_reaction == "savi"

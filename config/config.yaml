@@ -22,6 +22,10 @@ molecule_validation:
   # Number of molecules to validate
   num_molecules: 100
 
+# Reaction filtering configuration
+reaction_filtering:
+  random_valid_reaction: false  # true = one random reaction per epoch, false = all reactions valid
+
 # Competition parameters
 competition:
   # No submission blocks
