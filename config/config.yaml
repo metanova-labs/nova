@@ -24,7 +24,7 @@ molecule_validation:
 
 # Reaction filtering configuration
 reaction_filtering:
-  random_valid_reaction: false  # true = one random reaction per epoch, false = all reactions valid
+  random_valid_reaction: true  # true = one random reaction per epoch, false = all reactions valid
 
 # Competition parameters
 competition:
