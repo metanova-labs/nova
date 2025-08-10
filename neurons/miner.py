@@ -26,7 +26,13 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from config.config_loader import load_config
-from my_utils import get_sequence_from_protein_code, upload_file_to_github, get_challenge_proteins_from_blockhash, get_heavy_atom_count, compute_maccs_entropy
+from utils import (
+    get_sequence_from_protein_code,
+    upload_file_to_github,
+    get_challenge_params_from_blockhash,
+    get_heavy_atom_count,
+    compute_maccs_entropy,
+)
 from PSICHIC.wrapper import PsichicWrapper
 from btdr import QuicknetBittensorDrandTimelock
 
@@ -464,29 +470,29 @@ async def run_miner(config: argparse.Namespace) -> None:
         block_to_check = last_boundary
 
     block_hash = await subtensor.determine_block_hash(block_to_check)
-    startup_proteins = get_challenge_proteins_from_blockhash(
+    startup_params = get_challenge_params_from_blockhash(
         block_hash=block_hash,
         weekly_target=config.weekly_target,
         num_antitargets=config.num_antitargets
     )
 
-    if startup_proteins:
-        state['current_challenge_targets'] = startup_proteins["targets"]
-        state['last_challenge_targets'] = startup_proteins["targets"]
-        state['current_challenge_antitargets'] = startup_proteins["antitargets"]
-        state['last_challenge_antitargets'] = startup_proteins["antitargets"]
-        bt.logging.info(f"Startup targets: {startup_proteins['targets']}, antitargets: {startup_proteins['antitargets']}")
+    if startup_params:
+        state['current_challenge_targets'] = startup_params["targets"]
+        state['last_challenge_targets'] = startup_params["targets"]
+        state['current_challenge_antitargets'] = startup_params["antitargets"]
+        state['last_challenge_antitargets'] = startup_params["antitargets"]
+        bt.logging.info(f"Startup targets: {startup_params['targets']}, antitargets: {startup_params['antitargets']}")
 
         # Initialize models for all proteins
         try:
-            for target_protein in startup_proteins["targets"]:
+            for target_protein in startup_params["targets"]:
                 target_sequence = get_sequence_from_protein_code(target_protein)
                 model = PsichicWrapper()
                 model.run_challenge_start(target_sequence)
                 state['psichic_models'][target_protein] = model
                 bt.logging.info(f"Initialized model for target: {target_protein}")
 
-            for antitarget_protein in startup_proteins["antitargets"]:
+            for antitarget_protein in startup_params["antitargets"]:
                 antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
                 model = PsichicWrapper()
                 model.run_challenge_start(antitarget_sequence)
@@ -536,19 +542,19 @@ async def run_miner(config: argparse.Namespace) -> None:
                 
                 block_hash = await subtensor.determine_block_hash(current_block)
                 
-                new_proteins = get_challenge_proteins_from_blockhash(
+                new_params = get_challenge_params_from_blockhash(
                     block_hash=block_hash,
                     weekly_target=config.weekly_target,
                     num_antitargets=config.num_antitargets
                 )
-                if (new_proteins and 
-                    (new_proteins["targets"] != state['last_challenge_targets'] or 
-                     new_proteins["antitargets"] != state['last_challenge_antitargets'])):
-                    state['current_challenge_targets'] = new_proteins["targets"]
-                    state['last_challenge_targets'] = new_proteins["targets"]
-                    state['current_challenge_antitargets'] = new_proteins["antitargets"]
-                    state['last_challenge_antitargets'] = new_proteins["antitargets"]
-                    bt.logging.info(f"New proteins - targets: {new_proteins['targets']}, antitargets: {new_proteins['antitargets']}")
+                if (new_params and
+                    (new_params["targets"] != state['last_challenge_targets'] or
+                     new_params["antitargets"] != state['last_challenge_antitargets'])):
+                    state['current_challenge_targets'] = new_params["targets"]
+                    state['last_challenge_targets'] = new_params["targets"]
+                    state['current_challenge_antitargets'] = new_params["antitargets"]
+                    state['last_challenge_antitargets'] = new_params["antitargets"]
+                    bt.logging.info(f"New proteins - targets: {new_params['targets']}, antitargets: {new_params['antitargets']}")
 
                 # Cancel old inference, reset relevant state
                 if 'inference_task' in state and state['inference_task']:

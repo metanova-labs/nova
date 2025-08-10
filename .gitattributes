@@ -2,3 +2,6 @@
 
 # Treat all text files as text and ensure LF
 * text eol=lf
+
+# Prevent Git from normalizing binary model files
+*.pt binary

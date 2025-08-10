@@ -31,7 +31,7 @@ sys.path.append(BASE_DIR)
 from auto_updater import AutoUpdater
 from btdr import QuicknetBittensorDrandTimelock
 from config.config_loader import load_config
-from my_utils import (
+from utils import (
     calculate_dynamic_entropy,
     compute_maccs_entropy,
     find_chemically_identical,
@@ -41,7 +41,7 @@ from my_utils import (
     get_smiles,
     is_reaction_allowed,
     molecule_unique_for_protein_hf,
-    monitor_validator
+    monitor_validator,
 )
 from PSICHIC.wrapper import PsichicWrapper
 
