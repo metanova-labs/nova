@@ -26,7 +26,13 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from config.config_loader import load_config
-from my_utils import get_sequence_from_protein_code, upload_file_to_github, get_challenge_proteins_from_blockhash, get_heavy_atom_count, compute_maccs_entropy
+from utils import (
+    get_sequence_from_protein_code,
+    upload_file_to_github,
+    get_challenge_params_from_blockhash,
+    get_heavy_atom_count,
+    compute_maccs_entropy,
+)
 from PSICHIC.wrapper import PsichicWrapper
 from btdr import QuicknetBittensorDrandTimelock
 
@@ -464,7 +470,7 @@ async def run_miner(config: argparse.Namespace) -> None:
         block_to_check = last_boundary
 
     block_hash = await subtensor.determine_block_hash(block_to_check)
-    startup_proteins = get_challenge_proteins_from_blockhash(
+    startup_proteins = get_challenge_params_from_blockhash(
         block_hash=block_hash,
         weekly_target=config.weekly_target,
         num_antitargets=config.num_antitargets
@@ -536,7 +542,7 @@ async def run_miner(config: argparse.Namespace) -> None:
                 
                 block_hash = await subtensor.determine_block_hash(current_block)
                 
-                new_proteins = get_challenge_proteins_from_blockhash(
+                new_proteins = get_challenge_params_from_blockhash(
                     block_hash=block_hash,
                     weekly_target=config.weekly_target,
                     num_antitargets=config.num_antitargets
