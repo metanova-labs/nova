@@ -19,6 +19,9 @@ def get_config():
     parser = argparse.ArgumentParser('Nova')
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
+    
+    parser.add_argument('--test_mode', action='store_true', 
+                       help='Run test validator without setting weights')
 
     config = bt.config(parser)
     config.netuid = 68

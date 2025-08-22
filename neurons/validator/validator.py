@@ -14,13 +14,13 @@ from config.config_loader import load_config
 from PSICHIC.wrapper import PsichicWrapper
 
 from utils import get_challenge_params_from_blockhash
-from .setup import get_config, setup_logging, check_registration, setup_github_auth
-from .weights import set_weights
-from .commitments import gather_and_decrypt_commitments
-from .validity import validate_molecules_and_calculate_entropy, count_molecule_names
-from .scoring import score_all_proteins_batched
-from .ranking import calculate_final_scores, determine_winner
-from .monitoring import monitor_validator
+from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
+from neurons.validator.weights import set_weights
+from neurons.validator.commitments import gather_and_decrypt_commitments
+from neurons.validator.validity import validate_molecules_and_calculate_entropy, count_molecule_names
+from neurons.validator.scoring import score_all_proteins_batched
+from neurons.validator.ranking import calculate_final_scores, determine_winner
+from neurons.validator.monitoring import monitor_validator
 
 # Initialize global components
 psichic = PsichicWrapper()
@@ -107,16 +107,20 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # Determine winner
         winning_uid = determine_winner(score_dict)
 
-        # Monitor validator performance
-        set_weights_call_block = await subtensor.get_current_block()
-        monitor_validator(
-            score_dict=score_dict,
-            metagraph=metagraph,
-            current_epoch=current_epoch,
-            current_block=set_weights_call_block,
-            validator_hotkey=wallet.hotkey.ss58_address,
-            winning_uid=winning_uid
-        )
+        # Yield so ws heartbeats can run before the next RPC
+        await asyncio.sleep(0)
+
+        # Monitor validators
+        if not bool(getattr(config, 'test_mode', False)):
+            set_weights_call_block = await subtensor.get_current_block()
+            monitor_validator(
+                score_dict=score_dict,
+                metagraph=metagraph,
+                current_epoch=current_epoch,
+                current_block=set_weights_call_block,
+                validator_hotkey=wallet.hotkey.ss58_address,
+                winning_uid=winning_uid
+            )
 
         return winning_uid
 
@@ -128,14 +132,24 @@ async def main(config):
     """
     Main validator loop
     """
-    wallet = bt.wallet(config=config)
+    test_mode = bool(getattr(config, 'test_mode', False))
     
     # Initialize subtensor client
     subtensor = bt.async_subtensor(network=config.network)
     await subtensor.initialize()
+    
+    # Wallet + registration check (skipped in test mode)
+    wallet = None
+    if test_mode:
+        bt.logging.info("TEST MODE: running without setting weights")
+    else:
+        try:
+            wallet = bt.wallet(config=config)
+            await check_registration(wallet, subtensor, config.netuid)
+        except Exception as e:
+            bt.logging.error(f"Wallet/registration check failed: {e}")
+            sys.exit(1)
 
-    # Setup and validation
-    await check_registration(wallet, subtensor, config.netuid)
     setup_github_auth(GITHUB_HEADERS)
 
     # Auto-updater setup
@@ -147,31 +161,34 @@ async def main(config):
         bt.logging.info("Auto-updater disabled. Set AUTO_UPDATE=1 to enable.")
 
     # Main validator loop
+    last_logged_blocks_remaining = None
     while True:
         try:
             metagraph = await subtensor.metagraph(config.netuid)
-            bt.logging.debug(f'Found {metagraph.n} nodes in network')
             current_block = await subtensor.get_current_block()
 
             if current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
                 winning_uid = await process_epoch(config, current_block, metagraph, subtensor, wallet)
-                await set_weights(winning_uid, config)
+                if not test_mode:
+                    await set_weights(winning_uid, config, test_mode=False)
                 
-            elif current_block % (config.epoch_length/2) == 0:
-                # Mid-epoch - refresh connection
-                subtensor = bt.async_subtensor(network=config.network)
-                await subtensor.initialize()
-                bt.logging.info("Validator reset subtensor connection.")
-                await asyncio.sleep(12)
-            
             else:
                 # Waiting for epoch
                 blocks_remaining = config.epoch_length - (current_block % config.epoch_length)
-                bt.logging.info(f"Waiting for epoch to end... {blocks_remaining} blocks remaining.")
+                if (blocks_remaining % 5 == 0) and (blocks_remaining != last_logged_blocks_remaining):
+                    bt.logging.info(f"Waiting for epoch to end... {blocks_remaining} blocks remaining.")
+                    last_logged_blocks_remaining = blocks_remaining
                 await asyncio.sleep(1)
                 
+ 
+        except asyncio.CancelledError:
+            bt.logging.info("Resetting subtensor connection.")
+            subtensor = bt.async_subtensor(network=config.network)
+            await subtensor.initialize()
+            await asyncio.sleep(1)
+            continue
         except Exception as e:
             bt.logging.error(f"Error in main loop: {e}")
             await asyncio.sleep(3)
