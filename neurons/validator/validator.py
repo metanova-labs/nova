@@ -172,7 +172,7 @@ async def main(config):
                 config.update(load_config())
                 winning_uid = await process_epoch(config, current_block, metagraph, subtensor, wallet)
                 if not test_mode:
-                    await set_weights(winning_uid, config, test_mode=False)
+                    await set_weights(winning_uid, config)
                 
             else:
                 # Waiting for epoch
