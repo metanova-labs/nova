@@ -43,16 +43,19 @@ class BoltzWrapper:
         bt.logging.info("Preprocessing data for Boltz2")
         for uid, valid_molecules in valid_molecules_by_uid.items():
             # Select a subsample of n molecules to score
-            seed = int(final_block_hash[2:], 16) + uid
-            rng = random.Random(seed)
-            bt.logging.debug(f"seed: {seed}")
+            if self.subnet_config['sample_selection'] == "random":
+                seed = int(final_block_hash[2:], 16) + uid
+                rng = random.Random(seed)
 
-            unique_indices = rng.sample(range(len(valid_molecules['smiles'])), 
-                                        k=self.subnet_config['num_molecules_boltz'])
-            bt.logging.debug(f"unique_indices: {unique_indices}")
+                unique_indices = rng.sample(range(len(valid_molecules['smiles'])), 
+                                            k=self.subnet_config['num_molecules_boltz'])
 
-            boltz_candidates_smiles = [valid_molecules['smiles'][i] for i in unique_indices]
-            bt.logging.debug(f"boltz_candidates_smiles: {boltz_candidates_smiles}")
+                boltz_candidates_smiles = [valid_molecules['smiles'][i] for i in unique_indices]
+            elif self.subnet_config['sample_selection'] == "first":
+                boltz_candidates_smiles = valid_molecules['smiles'][:self.subnet_config['num_molecules_boltz']]
+            else:
+                bt.logging.error(f"Invalid sample selection method: {self.subnet_config['sample_selection']}")
+                raise ValueError(f"Invalid sample selection method: {self.subnet_config['sample_selection']}")
 
             if self.subnet_config['num_molecules_boltz'] > 1:
                 try:
@@ -182,43 +185,3 @@ properties:
             else:
                 data['boltz_score'] = None
         
-
-# Test
-if __name__ == "__main__":
-
-    valid_molecules_by_uid = {60: 
-        {'smiles': ['CCC12CCC3C4CCC(=O)C=C4CCC3C1C=CC2(OS(=O)(=O)[O-])c1cn(P(N)Cl)nn1', 
-                'CCNC(Cc1cn(C2CC(n3ccc(=O)[nH]c3=O)OC2COP(=O)(O)O)nn1)c1ccc(F)c(C)c1', 
-                'CCN(CC)C(=O)c1cncc(-c2cn([C@@H]3C[C@H](n4ccc(=O)[nH]c4=O)O[C@@H]3COP(=O)(O)O)nn2)c1', 
-                'CO[C@H]1C[C@H](n2cc(COc3ccc(Br)cc3C3C(C#N)=C(N)OC4=C3C(=O)CCC4)nn2)C1', 
-                'CCC12CCC3C4CCC(=O)C=C4CCC3C1C=CC2(OS(=O)(=O)[O-])c1cn(CCn2nc(-c3cnccn3)cc2N)nn1'], 
-                
-        'names': ['rxn:1:60108:29570', 
-              'rxn:1:62297:4530', 
-              'rxn:1:12251:43967', 
-              'rxn:1:61507:9868', 
-              'rxn:1:60265:29570',]
-    },
-              
-    83: 
-        {'smiles': ['CCNC(Cc1cn(C2CC(n3ccc(=O)[nH]c3=O)OC2COP(=O)(O)O)nn1)c1ccc(F)c(C)c1',
-                'CCC12CCC3C4CCC(=O)C=C4CCC3C1C=CC2(OS(=O)(=O)[O-])c1cn(P(N)Cl)nn1', 
-                'CCN(CC)C(=O)c1cncc(-c2cn([C@@H]3C[C@H](n4ccc(=O)[nH]c4=O)O[C@@H]3COP(=O)(O)O)nn2)c1', 
-                'CO[C@H]1C[C@H](n2cc(COc3ccc(Br)cc3C3C(C#N)=C(N)OC4=C3C(=O)CCC4)nn2)C1', 
-                'CCC12CCC3C4CCC(=O)C=C4CCC3C1C=CC2(OS(=O)(=O)[O-])c1cn(CCn2nc(-c3cnccn3)cc2N)nn1',],
-                
-        'names': ['rxn:1:62297:4530',
-                'rxn:1:60108:29570',  
-               'rxn:1:12251:43967', 
-               'rxn:1:61507:9868', 
-               'rxn:1:60265:29570',]
-        },
-    }
-
-    from config.config_loader import load_config
-    subnet_config = load_config('config/config.yaml')
-    print(subnet_config)
-
-
-    boltz = BoltzWrapper()
-    boltz.predict(valid_molecules_by_uid, subnet_config)

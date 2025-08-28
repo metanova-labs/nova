@@ -32,6 +32,7 @@ def load_config(path: str = "config/config.yaml"):
     molecule_repetition_threshold = validation_config["molecule_repetition_threshold"]
     num_molecules_boltz = validation_config["num_molecules_boltz"]
     boltz_metric = validation_config["boltz_metric"]
+    sample_selection = validation_config["sample_selection"]
 
     # Load protein constraints
     protein_constraints = config["protein_constraints"]
@@ -64,5 +65,6 @@ def load_config(path: str = "config/config.yaml"):
         'binding_pocket': binding_pocket,
         'max_distance': max_distance,
         'force': force,
-        'boltz_weight': boltz_weight
+        'boltz_weight': boltz_weight,
+        'sample_selection': sample_selection
     }
