@@ -1,7 +1,12 @@
 # Number of targets and antitargets to select
 protein_selection:
-  weekly_target: "Q6P6W3"
-  num_antitargets: 8  
+  weekly_target: "Q92769"
+  num_antitargets: 8 
+
+protein_constraints: # target only
+  binding_pocket: null # list of residue numbers that define the binding pocket
+  max_distance: null # maximum distance from pocket center, in angstroms
+  force: false # whether to force the constraint (default: False for soft guidance)
 
 # Parameters for validating and scoring molecules
 molecule_validation:
@@ -10,7 +15,7 @@ molecule_validation:
   # Scoring weights for entropy
   entropy_bonus_threshold: 0
   entropy_start_weight: 0.3
-  entropy_start_epoch: 17027
+  entropy_start_epoch: 17446
   entropy_step_size: 0.007142857  # 1/140 to increase by 1.0 over about 1 week
   # Scoring weights for molecule repetition
   molecule_repetition_weight: 0
@@ -19,8 +24,11 @@ molecule_validation:
   min_heavy_atoms: 20
   min_rotatable_bonds: 1
   max_rotatable_bonds: 10
-  # Number of molecules to validate
+  # Number of molecules to validate with PSICHIC
   num_molecules: 100
+  # Number of molecules to validate with Boltz2
+  num_molecules_boltz: 1
+  boltz_metric: "affinity_probability_binary" # metric to use for scoring: ["affinity_pred_value", "affinity_probability_binary", "confidence_score", ...]
 
 # Reaction filtering configuration
 reaction_filtering:
@@ -30,3 +38,4 @@ reaction_filtering:
 competition:
   # No submission blocks
   no_submission_blocks: 10
+  boltz_weight: 0.5 # proportion of incentive to give to Boltz2 winner

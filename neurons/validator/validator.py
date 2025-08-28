@@ -12,18 +12,20 @@ from auto_updater import AutoUpdater
 from btdr import QuicknetBittensorDrandTimelock
 from config.config_loader import load_config
 from PSICHIC.wrapper import PsichicWrapper
+from boltz.wrapper import BoltzWrapper
 
 from utils import get_challenge_params_from_blockhash
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
 from neurons.validator.validity import validate_molecules_and_calculate_entropy, count_molecule_names
-from neurons.validator.scoring import score_all_proteins_batched
+from neurons.validator.scoring import score_all_proteins_psichic
 from neurons.validator.ranking import calculate_final_scores, determine_winner
 from neurons.validator.monitoring import monitor_validator
 
 # Initialize global components
 psichic = PsichicWrapper()
+boltz = BoltzWrapper()
 btd = QuicknetBittensorDrandTimelock()
 GITHUB_HEADERS = {}
 
@@ -39,6 +41,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
     try:
         start_block = current_block - config.epoch_length
         start_block_hash = await subtensor.determine_block_hash(start_block)
+        final_block_hash = await subtensor.determine_block_hash(current_block)
         current_epoch = (current_block // config.epoch_length) - 1
 
         # Get challenge parameters for this epoch
@@ -46,7 +49,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             block_hash=start_block_hash,
             weekly_target=config.weekly_target,
             num_antitargets=config.num_antitargets,
-            include_reaction=config.random_valid_reaction
+            include_reaction=config.random_valid_reaction,
         )
         target_proteins = challenge_params["targets"]
         antitarget_proteins = challenge_params["antitargets"]
@@ -72,6 +75,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 "target_scores": [[] for _ in range(len(target_proteins))],
                 "antitarget_scores": [[] for _ in range(len(antitarget_proteins))],
                 "entropy": None,
+                "entropy_boltz": None,
                 "block_submitted": None,
                 "push_time": uid_to_data[uid].get("push_time", '')
             }
@@ -90,7 +94,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         molecule_name_counts = count_molecule_names(valid_molecules_by_uid)
 
         # Score all target proteins then all antitarget proteins one protein at a time
-        score_all_proteins_batched(
+        score_all_proteins_psichic(
             target_proteins=target_proteins,
             antitarget_proteins=antitarget_proteins,
             score_dict=score_dict,
@@ -99,13 +103,15 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             batch_size=32
         )
 
+        boltz.score_molecules_target(valid_molecules_by_uid, score_dict, config, final_block_hash)
+
         # Calculate final scores
         score_dict = calculate_final_scores(
             score_dict, valid_molecules_by_uid, molecule_name_counts, config, current_epoch
         )
 
         # Determine winner
-        winning_uid = determine_winner(score_dict)
+        winner_psichic, winner_boltz = determine_winner(score_dict)
 
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
@@ -122,7 +128,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 winning_uid=winning_uid
             )
 
-        return winning_uid
+        return winner_psichic, winner_boltz
 
     except Exception as e:
         bt.logging.error(f"Error processing epoch: {e}")
@@ -170,9 +176,9 @@ async def main(config):
             if current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
-                winning_uid = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                winner_psichic, winner_boltz = await process_epoch(config, current_block, metagraph, subtensor, wallet)
                 if not test_mode:
-                    await set_weights(winning_uid, config, test_mode=False)
+                    await set_weights(winner_psichic, winner_boltz, config)
                 
             else:
                 # Waiting for epoch

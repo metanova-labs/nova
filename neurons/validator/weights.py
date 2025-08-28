@@ -5,15 +5,12 @@ import os
 from dotenv import load_dotenv
 import time
 
-async def set_weights(winning_uid, config):
-    if winning_uid is not None:
+async def set_weights(winner_psichic, winner_boltz, config):
+    if winner_psichic is not None or winner_boltz is not None:
         load_dotenv()
         
-        burn_rate = 0.8
+        burn_rate = 0.5
         
-        # 1) Parse the single argument for target_uid
-        # Using direct values instead of argparse for function call
-        target_uid = winning_uid
         wallet_name = config.wallet.name
         wallet_hotkey = config.wallet.hotkey
 
@@ -27,7 +24,6 @@ async def set_weights(winning_uid, config):
         # Create Subtensor connection using network from .env
         subtensor_network = os.getenv('SUBTENSOR_NETWORK')
         subtensor = bt.subtensor(network=subtensor_network)
-
 
         # Download the metagraph for netuid=68
         metagraph = subtensor.metagraph(NETUID)
@@ -47,9 +43,20 @@ async def set_weights(winning_uid, config):
             bt.logging.error(f"Error: target_uid {target_uid} out of range [0, {n-1}]. Exiting.")
             return
 
-        # Set weights: burn to UID 0, remainder to target
+        # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
-        weights[target_uid] += 1.0 - burn_rate
+        if winner_psichic and winner_boltz:
+            weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
+            weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
+
+        elif winner_psichic and not winner_boltz:
+            weights[winner_psichic] = 1.0 - burn_rate
+
+        elif not winner_psichic and winner_boltz:
+            weights[winner_boltz] = 1.0 - burn_rate
+        else:
+            bt.logging.error("No valid molecule commitment found for current epoch.")
+            return
 
         # 3) Send the weights to the chain with retry logic
         max_retries = 10

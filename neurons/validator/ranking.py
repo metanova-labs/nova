@@ -31,8 +31,6 @@ def calculate_final_scores(
     Returns:
         Updated score_dict with final scores calculated
     """
-    best_score = -math.inf
-    best_uid = None
     
     dynamic_entropy_weight = calculate_dynamic_entropy(
         starting_weight=config['entropy_start_weight'],
@@ -103,7 +101,11 @@ def calculate_final_scores(
         # Apply entropy bonus for scores above threshold
         if score_dict[uid]['final_score'] > config['entropy_bonus_threshold'] and entropy is not None:
             score_dict[uid]['final_score'] = score_dict[uid]['final_score'] * (1 + (dynamic_entropy_weight * entropy))
-        
+
+        if all(v is not None for v in [score_dict[uid]['boltz_score'], score_dict[uid]['entropy_boltz']]):
+            if score_dict[uid]['boltz_score'] > config['entropy_bonus_threshold'] and config['num_molecules_boltz'] > 1:
+                score_dict[uid]['boltz_score'] = score_dict[uid]['boltz_score'] * (1 + (dynamic_entropy_weight * score_dict[uid]['entropy_boltz']))
+
         # Log details
         # Prepare detailed log info
         smiles_list = data.get('smiles', [])
@@ -118,6 +120,8 @@ def calculate_final_scores(
             f"  Target scores per molecule: {target_scores_per_mol}",
             f"  Antitarget scores per molecule: {antitarget_scores_per_mol}",
             f"  Entropy: {entropy}",
+            f"  Boltz scores: {score_dict[uid]['boltz_score']}",
+            f"  Entropy Boltz: {score_dict[uid]['entropy_boltz'] if score_dict[uid]['entropy_boltz'] is not None else 'None'}",
             f"  Dynamic entropy weight: {dynamic_entropy_weight}",
             f"  Final score: {score_dict[uid]['final_score']}"
         ]
@@ -137,33 +141,11 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
     Returns:
         Optional[int]: Winning UID or None if no valid scores found
     """
-    best_score = -math.inf
-    best_uids = []
-    
-    # Find highest final score
-    for uid, data in score_dict.items():
-        if 'final_score' not in data:
-            continue
-            
-        final_score = round(data['final_score'], 4)
-        
-        if final_score > best_score:
-            best_score = final_score
-            best_uids = [uid]
-        elif final_score == best_score:
-            best_uids.append(uid)
-    
-    if not best_uids:
-        bt.logging.info("No valid winner found (all scores -inf or no submissions).")
-        return None
-    
-    # If only one winner, return it
-    if len(best_uids) == 1:
-        winner_block = score_dict[best_uids[0]].get('block_submitted')
-        current_epoch = winner_block // 361 if winner_block else None
-        bt.logging.info(f"Epoch {current_epoch} winner: UID={best_uids[0]}, winning_score={best_score}")
-        return best_uids[0]
-    
+    best_score_psichic = -math.inf
+    best_score_boltz = -math.inf
+    best_uids_psichic = []
+    best_uids_boltz = []
+
     def parse_timestamp(uid):
         ts = score_dict[uid].get('push_time', '')
         try:
@@ -171,22 +153,73 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
         except Exception as e:
             bt.logging.warning(f"Failed to parse timestamp '{ts}' for UID={uid}: {e}")
             return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
-    
-    # Sort by block number first, then push time, then uid to ensure deterministic result
-    winner = sorted(best_uids, key=lambda uid: (
-        score_dict[uid].get('block_submitted', float('inf')), 
-        parse_timestamp(uid), 
-        uid
-    ))[0]
-    
-    winner_block = score_dict[winner].get('block_submitted')
-    current_epoch = winner_block // 361 if winner_block else None
-    push_time = score_dict[winner].get('push_time', '')
-    
-    tiebreaker_message = f"Epoch {current_epoch} tiebreaker winner: UID={winner}, score={best_score}, block={winner_block}"
-    if push_time:
-        tiebreaker_message += f", push_time={push_time}"
+
+    def tie_breaker(tied_uids: list[int], best_score: float, model_name: str):
+        # Sort by block number first, then push time, then uid to ensure deterministic result
+        winner = sorted(tied_uids, key=lambda uid: (
+            score_dict[uid].get('block_submitted', float('inf')), 
+            parse_timestamp(uid), 
+            uid
+        ))[0]
         
-    bt.logging.info(tiebreaker_message)
+        winner_block = score_dict[winner].get('block_submitted')
+        current_epoch = winner_block // 361 if winner_block else None
+        push_time = score_dict[winner].get('push_time', '')
         
-    return winner
+        tiebreaker_message = f"Epoch {current_epoch} tiebreaker {model_name} winner: UID={winner}, score={best_score}, block={winner_block}"
+        if push_time:
+            tiebreaker_message += f", push_time={push_time}"
+            
+        bt.logging.info(tiebreaker_message)
+            
+        return winner
+    
+    # Find highest final score
+    for uid, data in score_dict.items():
+        if 'final_score' not in data or 'boltz_score' not in data:
+            continue
+        
+        psichic_score = round(data['final_score'], 4)
+        boltz_score = round(data['boltz_score'], 4)
+        
+        if psichic_score > best_score_psichic:
+            best_score_psichic = psichic_score
+            best_uids_psichic = [uid]
+        elif psichic_score == best_score_psichic:
+            best_uids_psichic.append(uid)
+
+        if boltz_score > best_score_boltz:
+            best_score_boltz = boltz_score
+            best_uids_boltz = [uid]
+        elif boltz_score == best_score_boltz:
+            best_uids_boltz.append(uid)
+    
+    if not best_uids_psichic and not best_uids_boltz:
+        bt.logging.info("No valid winner found (all scores -inf or no submissions).")
+        return None, None
+    
+    # Select winner from each model
+    if best_uids_psichic:
+        if len(best_uids_psichic) == 1:
+            psichic_winner_block = score_dict[best_uids_psichic[0]].get('block_submitted')
+            current_epoch = psichic_winner_block // 361 if psichic_winner_block else None
+            bt.logging.info(f"Epoch {current_epoch} PSICHIC winner: UID={best_uids_psichic[0]}, winning_score={best_score_psichic}")
+            winner_psichic = best_uids_psichic[0]
+        else:
+            winner_psichic = tie_breaker(best_uids_psichic, best_score_psichic, "PSICHIC")
+    else:
+        winner_psichic = None
+    
+    if best_uids_boltz:
+        if len(best_uids_boltz) == 1:
+            boltz_winner_block = score_dict[best_uids_boltz[0]].get('block_submitted')
+            current_epoch = boltz_winner_block // 361 if boltz_winner_block else None
+            bt.logging.info(f"Epoch {current_epoch} BOLTZ winner: UID={best_uids_boltz[0]}, winning_score={best_score_boltz}")
+            winner_boltz = best_uids_boltz[0]
+        else:
+            winner_boltz = tie_breaker(best_uids_boltz, best_score_boltz, "BOLTZ")
+    else:
+        winner_boltz = None
+    
+    return winner_psichic, winner_boltz
+    

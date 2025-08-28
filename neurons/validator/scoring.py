@@ -13,7 +13,7 @@ psichic = None
 BASE_DIR = None
 
 
-def score_all_proteins_batched(
+def score_all_proteins_psichic(
     target_proteins: list[str],
     antitarget_proteins: list[str],
     score_dict: dict[int, dict[str, list[list[float]]]],
