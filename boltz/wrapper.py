@@ -32,6 +32,7 @@ class BoltzWrapper:
         os.makedirs(self.output_dir, exist_ok=True)
 
         bt.logging.debug(f"BoltzWrapper initialized")
+        self.per_molecule_metric = {}
 
     def preprocess_data_for_boltz(self, valid_molecules_by_uid: dict, score_dict: dict, final_block_hash: str) -> None:
         # Get protein sequence
@@ -73,7 +74,6 @@ class BoltzWrapper:
                 self.unique_molecules[smiles].append((uid, mol_idx))
         bt.logging.info(f"Unique Boltz candidates: {self.unique_molecules}")
 
-        # Write unique molecules to input directory
         bt.logging.info(f"Writing {len(self.unique_molecules)} unique molecules to input directory")
         for smiles, ids in self.unique_molecules.items():
             yaml_content = self.create_yaml_content(smiles)
@@ -171,12 +171,17 @@ properties:
             bt.logging.info("Files removed")
 
         # Distribute results to all UIDs
+        self.per_molecule_metric = {}
         final_boltz_scores = {}
         for smiles, id_list in self.unique_molecules.items():
             for uid, mol_idx in id_list:
                 if uid not in final_boltz_scores:
                     final_boltz_scores[uid] = []
-                final_boltz_scores[uid].append(scores[mol_idx][self.subnet_config['boltz_metric']])
+                metric_value = scores[mol_idx][self.subnet_config['boltz_metric']]
+                final_boltz_scores[uid].append(metric_value)
+                if uid not in self.per_molecule_metric:
+                    self.per_molecule_metric[uid] = {}
+                self.per_molecule_metric[uid][smiles] = metric_value
         bt.logging.debug(f"final_boltz_scores: {final_boltz_scores}")
 
         for uid, data in score_dict.items():
