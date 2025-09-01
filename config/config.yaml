@@ -29,7 +29,7 @@ molecule_validation:
   # Number of molecules to validate with Boltz2
   num_molecules_boltz: 1
   boltz_metric: "affinity_probability_binary" # metric to use for scoring: ["affinity_pred_value", "affinity_probability_binary", "confidence_score", ...]
-  sample_selection: "random" # "random" or "first"
+  sample_selection: "first" # "random" or "first"
 
 # Reaction filtering configuration
 reaction_filtering:
