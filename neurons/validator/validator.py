@@ -22,6 +22,7 @@ from neurons.validator.validity import validate_molecules_and_calculate_entropy,
 from neurons.validator.scoring import score_all_proteins_psichic
 from neurons.validator.ranking import calculate_final_scores, determine_winner
 from neurons.validator.monitoring import monitor_validator
+from neurons.validator.save_data import submit_epoch_results
 
 # Initialize global components
 psichic = PsichicWrapper()
@@ -116,6 +117,28 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
 
+        # Submit results to dashboard API if configured
+        try:
+            submit_url = os.environ.get('SUBMIT_RESULTS_URL')
+            if submit_url:
+                await submit_epoch_results(
+                    submit_url=submit_url,
+                    config=config,
+                    metagraph=metagraph,
+                    boltz=boltz,
+                    current_block=current_block,
+                    start_block=start_block,
+                    current_epoch=current_epoch,
+                    target_proteins=target_proteins,
+                    antitarget_proteins=antitarget_proteins,
+                    uid_to_data=uid_to_data,
+                    valid_molecules_by_uid=valid_molecules_by_uid,
+                    molecule_name_counts=molecule_name_counts,
+                    score_dict=score_dict
+                )
+        except Exception as e:
+            bt.logging.error(f"Failed to submit results to dashboard API: {e}")
+
         # Monitor validators
         if not bool(getattr(config, 'test_mode', False)):
             set_weights_call_block = await subtensor.get_current_block()
@@ -125,7 +148,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 current_epoch=current_epoch,
                 current_block=set_weights_call_block,
                 validator_hotkey=wallet.hotkey.ss58_address,
-                winning_uid=winning_uid
+                winning_uid=winner_psichic
             )
 
         return winner_psichic, winner_boltz
