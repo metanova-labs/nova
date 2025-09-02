@@ -750,7 +750,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     cache: str = "~/.boltz",
     checkpoint: Optional[str] = None,
     affinity_checkpoint: Optional[str] = None,
-    devices: int = torch.cuda.device_count() - 1,
+    devices: int = 1,
     accelerator: str = "gpu",
     recycling_steps: int = 3,
     sampling_steps: int = 200,

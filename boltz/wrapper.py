@@ -5,8 +5,11 @@ import traceback
 import json
 import numpy as np
 import random
+import gc
+import shutil
 
 import bittensor as bt
+import torch
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PARENT_DIR = os.path.dirname(os.path.join(BASE_DIR, ".."))
@@ -184,4 +187,33 @@ properties:
                 data['boltz_score'] = np.mean(final_boltz_scores[uid])
             else:
                 data['boltz_score'] = None
+    
+    def clear_gpu_memory(self):
+        """Clear GPU memory and run garbage collection."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Reset CUDA context to allow other processes to initialize
+            torch.cuda.reset_peak_memory_stats()
+        gc.collect()
+    
+    def cleanup_model(self):
+        """Clean up model and free GPU memory."""
+        # Clean up temporary files
+        if hasattr(self, 'tmp_dir') and self.tmp_dir and os.path.exists(self.tmp_dir):
+            try:
+                shutil.rmtree(self.tmp_dir)
+                bt.logging.info(f"Cleaned up Boltz temporary directory: {self.tmp_dir}")
+            except Exception as e:
+                bt.logging.warning(f"Could not clean up Boltz temp directory: {e}")
+        
+        # Clear any model-specific attributes
+        if hasattr(self, 'unique_molecules'):
+            del self.unique_molecules
+            self.unique_molecules = None
+        if hasattr(self, 'protein_sequence'):
+            del self.protein_sequence
+            self.protein_sequence = None
+            
+        self.clear_gpu_memory()
         

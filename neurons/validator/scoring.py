@@ -35,6 +35,11 @@ def score_all_proteins_psichic(
     """
     global psichic, BASE_DIR
     
+    # Ensure psichic is initialized
+    if psichic is None:
+        bt.logging.error("PSICHIC model not initialized.")
+        return
+    
     all_proteins = target_proteins + antitarget_proteins
     
     # Process each protein
@@ -129,6 +134,10 @@ def score_all_proteins_psichic(
 def score_molecule_individually(smiles: str) -> float:
     """Helper function to score a single molecule."""
     global psichic
+    
+    if psichic is None:
+        bt.logging.error("PSICHIC model not initialized.")
+        return -math.inf
     
     try:
         results_df = psichic.run_validation([smiles])
