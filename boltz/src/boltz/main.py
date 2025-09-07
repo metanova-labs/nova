@@ -10,6 +10,7 @@ from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Literal, Optional
+import hashlib
 
 import click
 import torch
@@ -757,7 +758,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     diffusion_samples: int = 1,
     sampling_steps_affinity: int = 200,
     diffusion_samples_affinity: int = 3,
-    max_parallel_samples: Optional[int] = None,
+    max_parallel_samples: int = 1,
     step_scale: Optional[float] = None,
     write_full_pae: bool = False,
     write_full_pde: bool = False,
@@ -782,6 +783,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
+    batch_predictions: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -798,7 +800,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     torch.set_grad_enabled(False)
 
     # Ignore matmul precision warning
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision('highest')
+
+    # cuDNN determinism for order-independence
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     # Set rdkit pickle logic
     Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
@@ -925,6 +931,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             else:
                 devices = max(1, min(len(filtered_manifest.records), devices))
 
+    # Per-input inference enforces single-device to avoid DDP/data sharding issues
+    if not batch_predictions and ((isinstance(devices, int) and devices != 1) or (isinstance(devices, list) and len(devices) != 1)):
+        click.echo("Per-input inference enabled: forcing devices=1.")
+        devices = 1
+        strategy = "auto"
+
     # Set up model parameters
     diffusion_params = Boltz2DiffusionParams()
     step_scale = 1.5 if step_scale is None else step_scale
@@ -937,7 +949,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         use_paired_feature=model == "boltz2",
     )
 
-    # Create prediction writer
+        # Create prediction writer
     pred_writer = BoltzWriter(
         data_dir=processed.targets_dir,
         output_dir=out_dir / "predictions",
@@ -961,20 +973,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         msg += "s." if len(filtered_manifest.records) > 1 else "."
         click.echo(msg)
 
-        # Create data module
-        data_module = Boltz2InferenceDataModule(
-            manifest=processed.manifest,
-            target_dir=processed.targets_dir,
-            msa_dir=processed.msa_dir,
-            mol_dir=mol_dir,
-            num_workers=num_workers,
-            constraints_dir=processed.constraints_dir,
-            template_dir=processed.template_dir,
-            extra_mols_dir=processed.extra_mols_dir,
-            override_method=method,
-        )
-
-        # Load model
+        # Load model once
         if checkpoint is None:
             checkpoint = cache / "boltz2_conf.ckpt"
 
@@ -997,7 +996,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             checkpoint,
             strict=True,
             predict_args=predict_args,
-            map_location="cpu",
+            map_location="cuda:0" if torch.cuda.is_available() else "cpu",
             diffusion_process_args=asdict(diffusion_params),
             ema=False,
             use_kernels=not no_kernels,
@@ -1007,12 +1006,50 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
-        # Compute structure predictions
-        trainer.predict(
-            model_module,
-            datamodule=data_module,
-            return_predictions=False,
-        )
+        if not batch_predictions:
+            # Predict one input at a time, seeding by record id
+            for record in filtered_manifest.records:
+                h = hashlib.sha256(str(record.affinity.mw).encode()).digest()
+                base = int(seed) if (seed is not None) else 0
+                rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
+                seed_everything(rec_seed, workers=True)
+                torch.cuda.manual_seed_all(rec_seed)
+
+                single_manifest = Manifest([record])
+                data_module = Boltz2InferenceDataModule(
+                    manifest=single_manifest,
+                    target_dir=processed.targets_dir,
+                    msa_dir=processed.msa_dir,
+                    mol_dir=mol_dir,
+                    num_workers=num_workers,
+                    constraints_dir=processed.constraints_dir,
+                    template_dir=processed.template_dir,
+                    extra_mols_dir=processed.extra_mols_dir,
+                    override_method=method,
+                )
+                trainer.predict(
+                    model_module,
+                    datamodule=data_module,
+                    return_predictions=False,
+                )
+        else:
+            # Batched prediction (existing behavior)
+            data_module = Boltz2InferenceDataModule(
+                manifest=processed.manifest,
+                target_dir=processed.targets_dir,
+                msa_dir=processed.msa_dir,
+                mol_dir=mol_dir,
+                num_workers=num_workers,
+                constraints_dir=processed.constraints_dir,
+                template_dir=processed.template_dir,
+                extra_mols_dir=processed.extra_mols_dir,
+                override_method=method,
+            )
+            trainer.predict(
+                model_module,
+                datamodule=data_module,
+                return_predictions=False,
+            )
 
     # Check if affinity predictions are needed
     if any(r.affinity for r in manifest.records):
@@ -1038,19 +1075,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             output_dir=out_dir / "predictions",
         )
 
-        data_module = Boltz2InferenceDataModule(
-            manifest=manifest_filtered,
-            target_dir=out_dir / "predictions",
-            msa_dir=processed.msa_dir,
-            mol_dir=mol_dir,
-            num_workers=num_workers,
-            constraints_dir=processed.constraints_dir,
-            template_dir=processed.template_dir,
-            extra_mols_dir=processed.extra_mols_dir,
-            override_method="other",
-            affinity=True,
-        )
-
         predict_affinity_args = {
             "recycling_steps": 5,
             "sampling_steps": sampling_steps_affinity,
@@ -1061,7 +1085,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             "write_full_pde": False,
         }
 
-        # Load affinity model
+        # Load affinity model once
         if affinity_checkpoint is None:
             affinity_checkpoint = cache / "boltz2_aff.ckpt"
 
@@ -1070,12 +1094,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.guidance_update = False
         steering_args.physical_guidance_update = False
         steering_args.contact_guidance_update = False
-        
+
         model_module = Boltz2.load_from_checkpoint(
             affinity_checkpoint,
             strict=True,
             predict_args=predict_affinity_args,
-            map_location="cpu",
+            map_location="cuda:0" if torch.cuda.is_available() else "cpu",
             diffusion_process_args=asdict(diffusion_params),
             ema=False,
             pairformer_args=asdict(pairformer_args),
@@ -1085,13 +1109,51 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
+        # Swap writer callback
         trainer.callbacks[0] = pred_writer
-        trainer.predict(
-            model_module,
-            datamodule=data_module,
-            return_predictions=False,
-        )
 
+        if not batch_predictions:
+            for record in manifest_filtered.records:
+                h = hashlib.sha256(str(record.affinity.mw).encode()).digest()
+                base = int(seed) if (seed is not None) else 0
+                rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
+                seed_everything(rec_seed, workers=True)
+                torch.cuda.manual_seed_all(rec_seed)
 
-# if __name__ == "__main__":
-#     cli()
+                single_manifest = Manifest([record])
+                data_module = Boltz2InferenceDataModule(
+                    manifest=single_manifest,
+                    target_dir=out_dir / "predictions",
+                    msa_dir=processed.msa_dir,
+                    mol_dir=mol_dir,
+                    num_workers=num_workers,
+                    constraints_dir=processed.constraints_dir,
+                    template_dir=processed.template_dir,
+                    extra_mols_dir=processed.extra_mols_dir,
+                    override_method="other",
+                    affinity=True,
+                )
+                trainer.predict(
+                    model_module,
+                    datamodule=data_module,
+                    return_predictions=False,
+                )
+        else:
+            data_module = Boltz2InferenceDataModule(
+                manifest=manifest_filtered,
+                target_dir=out_dir / "predictions",
+                msa_dir=processed.msa_dir,
+                mol_dir=mol_dir,
+                num_workers=num_workers,
+                constraints_dir=processed.constraints_dir,
+                template_dir=processed.template_dir,
+                extra_mols_dir=processed.extra_mols_dir,
+                override_method="other",
+                affinity=True,
+            )
+            trainer.predict(
+                model_module,
+                datamodule=data_module,
+                return_predictions=False,
+            )
+

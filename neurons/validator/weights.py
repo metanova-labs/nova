@@ -46,8 +46,11 @@ async def set_weights(winner_psichic, winner_boltz, config):
         # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
         if winner_psichic and winner_boltz:
-            weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
-            weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
+            if winner_psichic == winner_boltz:
+                weights[winner_psichic] = 1.0 - burn_rate
+            else:
+                weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
+                weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
 
         elif winner_psichic and not winner_boltz:
             weights[winner_psichic] = 1.0 - burn_rate

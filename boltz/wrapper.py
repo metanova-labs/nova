@@ -34,11 +34,20 @@ class BoltzWrapper:
         self.output_dir = os.path.join(self.tmp_dir, "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
 
+        self.subnet_config = {'weekly_target': "Q9BY41",
+                              'sample_selection': "first",
+                              'num_molecules_boltz': 10,
+                              'binding_pocket': None,
+                              'max_distance': None,
+                              'force': False,
+                              'boltz_metric': "affinity_probability_binary"}
+
         bt.logging.debug(f"BoltzWrapper initialized")
 
     def preprocess_data_for_boltz(self, valid_molecules_by_uid: dict, score_dict: dict, final_block_hash: str) -> None:
         # Get protein sequence
         self.protein_sequence = get_sequence_from_protein_code(self.subnet_config['weekly_target'])
+        #self.protein_sequence = "MAYSQGGGKKKVCYYYDGDIGNYYYGQGHPMKPHRIRMTHNLLLNYGLYRKMEIYRPHKATAEEMTKYHSDEYIKFLRSIRPDNMSEYSKQMQRFNVGEDCPVFDGLFEFCQLSTGGSVAGAVKLNRQQTDMAVNWAGGLHHAKKSEASGFCYVNDIVLAILELLKYHQRVLYIDIDIHHGDGVEEAFYTTDRVMTVSFHKYGEYFPGTGDLRDIGAGKGKYYAVNFPMRDGIDDESYGQIFKPIISKVMEMYQPSAVVLQCGADSLSGDRLGCFNLTVKGHAKCVEVVKTFNLPLLMLGGGGYTIRNVARCWTYETAVALDCEIPNELPYNDYFEYFGPDFKLHISPSNMTNQNTPEYMEKIKQRLFENLRMLPHAPGVQMQAIPEDAVHEDSGDEDGEDPDKRISIRASDKRIACDEEFSDSEDEGEGGRRNVADHKKGAKKARIEEDKKETEDKKTDVKEEDKSKDNSGEKTDTKGTKSEQLSNP"
 
         # Collect all unique molecules across all UIDs
         self.unique_molecules = {}  # {smiles: [(uid, mol_idx), ...]}
@@ -47,18 +56,19 @@ class BoltzWrapper:
         for uid, valid_molecules in valid_molecules_by_uid.items():
             # Select a subsample of n molecules to score
             if self.subnet_config['sample_selection'] == "random":
-                seed = int(final_block_hash[2:], 16) + uid
-                rng = random.Random(seed)
+                #seed = int(final_block_hash[2:], 16) + uid
+                #rng = random.Random(seed)
 
-                unique_indices = rng.sample(range(len(valid_molecules['smiles'])), 
-                                            k=self.subnet_config['num_molecules_boltz'])
+                #unique_indices = rng.sample(range(len(valid_molecules['smiles'])), 
+                #                            k=self.subnet_config['num_molecules_boltz'])
 
-                boltz_candidates_smiles = [valid_molecules['smiles'][i] for i in unique_indices]
+                #boltz_candidates_smiles = [valid_molecules['smiles'][i] for i in unique_indices]
+                continue
             elif self.subnet_config['sample_selection'] == "first":
                 boltz_candidates_smiles = valid_molecules['smiles'][:self.subnet_config['num_molecules_boltz']]
             else:
                 bt.logging.error(f"Invalid sample selection method: {self.subnet_config['sample_selection']}")
-                raise ValueError(f"Invalid sample selection method: {self.subnet_config['sample_selection']}")
+                return None
 
             if self.subnet_config['num_molecules_boltz'] > 1:
                 try:
@@ -138,6 +148,7 @@ properties:
                 seed = 68,
                 affinity_mw_correction = self.config['affinity_mw_correction'],
                 no_kernels = self.config['no_kernels'],
+                batch_predictions = self.config['batch_predictions'],
             )
             bt.logging.info(f"Boltz2 predictions complete")
 
@@ -148,6 +159,7 @@ properties:
 
         # Collect scores and distribute results to all UIDs
         self.postprocess_data(score_dict)
+        self.cleanup_model()
 
     def postprocess_data(self, score_dict: dict) -> None:
         # Collect scores - Results need to be saved to disk because of distributed predictions
@@ -180,7 +192,8 @@ properties:
                 if uid not in final_boltz_scores:
                     final_boltz_scores[uid] = []
                 final_boltz_scores[uid].append(scores[mol_idx][self.subnet_config['boltz_metric']])
-        bt.logging.debug(f"final_boltz_scores: {final_boltz_scores}")
+        #bt.logging.debug(f"final_boltz_scores: {final_boltz_scores}")
+        print(f"final_boltz_scores: {final_boltz_scores}")
 
         for uid, data in score_dict.items():
             if uid in final_boltz_scores:
@@ -200,12 +213,12 @@ properties:
     def cleanup_model(self):
         """Clean up model and free GPU memory."""
         # Clean up temporary files
-        if hasattr(self, 'tmp_dir') and self.tmp_dir and os.path.exists(self.tmp_dir):
-            try:
-                shutil.rmtree(self.tmp_dir)
-                bt.logging.info(f"Cleaned up Boltz temporary directory: {self.tmp_dir}")
-            except Exception as e:
-                bt.logging.warning(f"Could not clean up Boltz temp directory: {e}")
+        # if hasattr(self, 'tmp_dir') and self.tmp_dir and os.path.exists(self.tmp_dir):
+        #     try:
+        #         shutil.rmtree(self.tmp_dir)
+        #         bt.logging.info(f"Cleaned up Boltz temporary directory: {self.tmp_dir}")
+        #     except Exception as e:
+        #         bt.logging.warning(f"Could not clean up Boltz temp directory: {e}")
         
         # Clear any model-specific attributes
         if hasattr(self, 'unique_molecules'):
@@ -216,4 +229,73 @@ properties:
             self.protein_sequence = None
             
         self.clear_gpu_memory()
+
+
+#Test
+if __name__ == "__main__":
+    boltz = BoltzWrapper()
+
+    valid_molecules = {1: {
+    'smiles': [
+        'Cc1ccc(N2CC(Cn3cc(-c4ccc(C(=O)N5CCN(c6ncc(Br)cc6C)CC5)cc4)nn3)CC2=O)c(C(=O)O)c1', 
+        'CN1CC(=O)N=C1N1CC(c2cn(CCC#Cc3ccc([N+](=O)[O-])s3)nn2)CC1=O', 
+        'Cc1cc(C)c(N2CC(c3cn(CCC4C(c5cccc(N6CCNCC6)c5)C4(F)F)nn3)CC2=O)c(C(=O)O)c1', 
+        'Cc1nc(Cl)ccc1N1CC(c2cn(CC3CC(=O)N(c4cc(C(C)(C)C)ccc4O)C3)nn2)CC1=O', 
+        'Cc1cc(F)ccc1S(=O)(=O)N1CCC(n2cc(-c3cccc(C(=O)N4CCC(F)CC4)c3)nn2)CC1', 
+        'CCN1C(=O)SC(=Cc2cc(Br)ccc2OCc2cn(C[C@@H]3CCC(=O)O3)nn2)C1=O', 
+        'Cc1c(Br)cccc1N1CC(c2cn(CC(C)(C)C(=O)N3CCNCC3)nn2)CC1=O', 
+        'Cc1c(Cl)cccc1N1CC(c2cn(CC(C)(C)C(=O)N3CCN(C)CC3)nn2)CC1=O', 
+        'N#Cc1ccc(S(=O)(=O)N2CCC(n3cc(C4CC(=O)N(c5cc(C(F)(F)F)ccn5)C4)nn3)C2)cc1', 
+        'Cc1cncc(N2CC(Cn3cc(COc4cc(N5N=CCCN(C)C5=O)c(F)cc4Cl)nn3)CC2=O)c1', 
+    ],
+    'names': [
+        'rxn:1:63525:12746', 
+        'rxn:1:44187:25096', 
+        'rxn:1:54802:25620', 
+        'rxn:1:62862:25694', 
+        'rxn:1:49472:29730', 
+        'rxn:1:61658:31521', 
+        'rxn:1:61868:25505', 
+        'rxn:1:61869:25509', 
+        'rxn:1:60647:27489', 
+        'rxn:1:63832:32674'
+    ],
+
+    },
+    
+    }
+
+    # How many random permutations to run; override with env N_PERMUTATIONS
+    n_permutations = 100
+    #rng_seed = 68
+    #random.seed(rng_seed)
+
+    # Run batch and collect scores per run
+    batch_results = []
+    smiles = valid_molecules[1]['smiles']
+    names = valid_molecules[1]['names']
+    idxs = list(range(len(smiles)))
+
+    for run in range(n_permutations):
+        random.shuffle(idxs)
+        run_valid = {
+            1: {
+                'smiles': [smiles[i] for i in idxs],
+                'names': [names[i] for i in idxs],
+            }
+        }
+        score_dict = {1: {}}
+        boltz.score_molecules_target(run_valid, score_dict, boltz.subnet_config, final_block_hash="")
+        batch_results.append({
+            'run': run,
+            'permutation': idxs.copy(),
+            'scores': score_dict,  # contains 'boltz_score' per UID
+        })
+
+    out_path = os.path.join(boltz.output_dir, f"batch_scores_{n_permutations}_runs.json")
+    with open(out_path, "w") as f:
+        json.dump(batch_results, f, indent=2)
+    print(f"Wrote batch scores to: {out_path}")
+
+    
         
