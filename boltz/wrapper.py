@@ -8,16 +8,45 @@ import random
 import gc
 import shutil
 
-import bittensor as bt
+os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import torch
+torch.use_deterministic_algorithms(True, warn_only=False)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+torch.set_float32_matmul_precision("high")
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PARENT_DIR = os.path.dirname(os.path.join(BASE_DIR, ".."))
 sys.path.append(BASE_DIR)
 
+import bittensor as bt
+
 from src.boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
 from utils.molecules import compute_maccs_entropy
+
+def _snapshot_rng():
+    import random, numpy as np, torch
+    return {
+        "py":  random.getstate(),
+        "np":  np.random.get_state(),
+        "tc":  torch.random.get_rng_state(),
+        "tcu": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+
+def _restore_rng(snap):
+    import random, numpy as np, torch
+    random.setstate(snap["py"])
+    np.random.set_state(snap["np"])
+    torch.random.set_rng_state(snap["tc"])
+    if snap["tcu"] is not None:
+        torch.cuda.set_rng_state_all(snap["tcu"])
 
 class BoltzWrapper:
     def __init__(self):
@@ -34,20 +63,19 @@ class BoltzWrapper:
         self.output_dir = os.path.join(self.tmp_dir, "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
 
-        self.subnet_config = {'weekly_target': "Q9BY41",
-                              'sample_selection': "first",
-                              'num_molecules_boltz': 10,
-                              'binding_pocket': None,
-                              'max_distance': None,
-                              'force': False,
-                              'boltz_metric': "affinity_probability_binary"}
+        base_seed = 68
+        random.seed(base_seed)
+        np.random.seed(base_seed)
+        torch.manual_seed(base_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(base_seed)
 
-        bt.logging.debug(f"BoltzWrapper initialized")
+        self._rng0 = _snapshot_rng()
+        bt.logging.debug("BoltzWrapper initialized with deterministic baseline")
 
     def preprocess_data_for_boltz(self, valid_molecules_by_uid: dict, score_dict: dict, final_block_hash: str) -> None:
         # Get protein sequence
         self.protein_sequence = get_sequence_from_protein_code(self.subnet_config['weekly_target'])
-        #self.protein_sequence = "MAYSQGGGKKKVCYYYDGDIGNYYYGQGHPMKPHRIRMTHNLLLNYGLYRKMEIYRPHKATAEEMTKYHSDEYIKFLRSIRPDNMSEYSKQMQRFNVGEDCPVFDGLFEFCQLSTGGSVAGAVKLNRQQTDMAVNWAGGLHHAKKSEASGFCYVNDIVLAILELLKYHQRVLYIDIDIHHGDGVEEAFYTTDRVMTVSFHKYGEYFPGTGDLRDIGAGKGKYYAVNFPMRDGIDDESYGQIFKPIISKVMEMYQPSAVVLQCGADSLSGDRLGCFNLTVKGHAKCVEVVKTFNLPLLMLGGGGYTIRNVARCWTYETAVALDCEIPNELPYNDYFEYFGPDFKLHISPSNMTNQNTPEYMEKIKQRLFENLRMLPHAPGVQMQAIPEDAVHEDSGDEDGEDPDKRISIRASDKRIACDEEFSDSEDEGEGGRRNVADHKKGAKKARIEEDKKETEDKKTDVKEEDKSKDNSGEKTDTKGTKSEQLSNP"
 
         # Collect all unique molecules across all UIDs
         self.unique_molecules = {}  # {smiles: [(uid, mol_idx), ...]}
@@ -135,6 +163,7 @@ properties:
         # Run Boltz2 for unique molecules
         bt.logging.info("Running Boltz2")
         try:
+            _restore_rng(self._rng0)
             predict(
                 data = self.input_dir,
                 out_dir = self.output_dir,
@@ -148,6 +177,7 @@ properties:
                 affinity_mw_correction = self.config['affinity_mw_correction'],
                 no_kernels = self.config['no_kernels'],
                 batch_predictions = self.config['batch_predictions'],
+                override = self.config['override'],
             )
             bt.logging.info(f"Boltz2 predictions complete")
 
@@ -222,8 +252,3 @@ properties:
             
         self.clear_gpu_memory()
 
-
-
-
-    
-        

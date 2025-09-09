@@ -3,6 +3,9 @@ import random
 import numpy as np
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import torch
 

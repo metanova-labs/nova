@@ -393,6 +393,7 @@ class Boltz2InferenceDataModule(pl.LightningDataModule):
             pin_memory=True,
             shuffle=False,
             collate_fn=collate,
+            persistent_workers=False,
         )
 
     def transfer_batch_to_device(

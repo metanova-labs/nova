@@ -11,6 +11,10 @@ from multiprocessing import Pool
 from pathlib import Path
 from typing import Literal, Optional
 import hashlib
+import random
+import numpy as np
+
+os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 import click
 import torch
@@ -745,6 +749,37 @@ def process_inputs(
     manifest.dump(out_dir / "processed" / "manifest.json")
 
 
+def _set_kernel_determinism():
+    torch.use_deterministic_algorithms(True, warn_only=False)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+
+def _snapshot_rng():
+    import random, numpy as np, torch
+    return {
+        "py":  random.getstate(),
+        "np":  np.random.get_state(),
+        "tc":  torch.random.get_rng_state(),
+        "tcu": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+
+def _restore_rng(snap):
+    import random, numpy as np, torch
+    random.setstate(snap["py"])
+    np.random.set_state(snap["np"])
+    torch.random.set_rng_state(snap["tc"])
+    if snap["tcu"] is not None:
+        torch.cuda.set_rng_state_all(snap["tcu"])
+
+def _make_gen(seed: int, device: str = "cuda"):
+    import torch
+    g = torch.Generator(device=device if torch.cuda.is_available() else "cpu")
+    g.manual_seed(seed)
+    return g
+
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -763,7 +798,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     write_full_pae: bool = False,
     write_full_pde: bool = False,
     output_format: Literal["pdb", "mmcif"] = "mmcif",
-    num_workers: int = 2,
+    num_workers: int = 0,
     override: bool = False,
     seed: Optional[int] = None,
     use_msa_server: bool = False,
@@ -799,19 +834,17 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     # Set no grad
     torch.set_grad_enabled(False)
 
+    _set_kernel_determinism()
+
     # Ignore matmul precision warning
     torch.set_float32_matmul_precision('highest')
-
-    # cuDNN determinism for order-independence
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
     # Set rdkit pickle logic
     Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
     # Set seed if desired
     if seed is not None:
-        seed_everything(seed)
+        seed_everything(int(seed), workers=True)
 
     for key in ["CUEQ_DEFAULT_CONFIG", "CUEQ_DISABLE_AOT_TUNING"]:
         # Disable kernel tuning by default,
@@ -949,7 +982,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         use_paired_feature=model == "boltz2",
     )
 
-        # Create prediction writer
+    # Create prediction writer
     pred_writer = BoltzWriter(
         data_dir=processed.targets_dir,
         output_dir=out_dir / "predictions",
@@ -965,7 +998,9 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         callbacks=[pred_writer],
         accelerator=accelerator,
         devices=devices,
-        precision="bf16-mixed",
+        precision="32-true",
+        deterministic=True, 
+        benchmark=False
     )
 
     if filtered_manifest.records:
@@ -1006,14 +1041,20 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
+        # ----- BASELINE SNAPSHOT (structure) -----
+        structure_rng0 = _snapshot_rng()
+
         if not batch_predictions:
             # Predict one input at a time, seeding by record id
             for record in filtered_manifest.records:
                 h = hashlib.sha256(str(record.affinity.mw).encode()).digest()
                 base = int(seed) if (seed is not None) else 0
                 rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
-                seed_everything(rec_seed, workers=True)
-                torch.cuda.manual_seed_all(rec_seed)
+                if seed is not None:
+                    seed_everything(rec_seed, workers=True)
+
+                # RESTORE baseline RNG for structure stage
+                _restore_rng(structure_rng0)
 
                 single_manifest = Manifest([record])
                 data_module = Boltz2InferenceDataModule(
@@ -1027,13 +1068,18 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                     extra_mols_dir=processed.extra_mols_dir,
                     override_method=method,
                 )
-                trainer.predict(
-                    model_module,
-                    datamodule=data_module,
-                    return_predictions=False,
-                )
+
+                # run prediction
+                with torch.no_grad():
+                    with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
+                        trainer.predict(
+                            model_module,
+                            datamodule=data_module,
+                            return_predictions=False,
+                        )
         else:
             # Batched prediction (existing behavior)
+            _restore_rng(structure_rng0)  # one baseline per whole batch call
             data_module = Boltz2InferenceDataModule(
                 manifest=processed.manifest,
                 target_dir=processed.targets_dir,
@@ -1045,11 +1091,13 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                 extra_mols_dir=processed.extra_mols_dir,
                 override_method=method,
             )
-            trainer.predict(
-                model_module,
-                datamodule=data_module,
-                return_predictions=False,
-            )
+            with torch.no_grad():
+                with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
+                    trainer.predict(
+                        model_module,
+                        datamodule=data_module,
+                        return_predictions=False,
+                    )
 
     # Check if affinity predictions are needed
     if any(r.affinity for r in manifest.records):
@@ -1112,13 +1160,19 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Swap writer callback
         trainer.callbacks[0] = pred_writer
 
+        # ----- BASELINE SNAPSHOT (affinity) -----
+        affinity_rng0 = _snapshot_rng()
+
         if not batch_predictions:
             for record in manifest_filtered.records:
                 h = hashlib.sha256(str(record.affinity.mw).encode()).digest()
                 base = int(seed) if (seed is not None) else 0
                 rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
-                seed_everything(rec_seed, workers=True)
-                torch.cuda.manual_seed_all(rec_seed)
+                if seed is not None:
+                    seed_everything(int(rec_seed), workers=True)
+
+                # RESTORE baseline RNG for affinity stage
+                _restore_rng(affinity_rng0)
 
                 single_manifest = Manifest([record])
                 data_module = Boltz2InferenceDataModule(
@@ -1133,12 +1187,15 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                     override_method="other",
                     affinity=True,
                 )
-                trainer.predict(
-                    model_module,
-                    datamodule=data_module,
-                    return_predictions=False,
-                )
+                with torch.no_grad():
+                    with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
+                        trainer.predict(
+                            model_module,
+                            datamodule=data_module,
+                            return_predictions=False,
+                        )
         else:
+            _restore_rng(affinity_rng0)
             data_module = Boltz2InferenceDataModule(
                 manifest=manifest_filtered,
                 target_dir=out_dir / "predictions",
@@ -1151,9 +1208,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                 override_method="other",
                 affinity=True,
             )
-            trainer.predict(
-                model_module,
-                datamodule=data_module,
-                return_predictions=False,
-            )
+            with torch.no_grad():
+                with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
+                    trainer.predict(
+                        model_module,
+                        datamodule=data_module,
+                        return_predictions=False,
+                    )
 
