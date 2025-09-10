@@ -7,6 +7,7 @@ import numpy as np
 import random
 import gc
 import shutil
+import hashlib
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -19,7 +20,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
-torch.set_float32_matmul_precision("high")
+torch.set_float32_matmul_precision("highest")
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PARENT_DIR = os.path.dirname(os.path.join(BASE_DIR, ".."))
@@ -32,7 +33,6 @@ from utils.proteins import get_sequence_from_protein_code
 from utils.molecules import compute_maccs_entropy
 
 def _snapshot_rng():
-    import random, numpy as np, torch
     return {
         "py":  random.getstate(),
         "np":  np.random.get_state(),
@@ -41,12 +41,15 @@ def _snapshot_rng():
     }
 
 def _restore_rng(snap):
-    import random, numpy as np, torch
     random.setstate(snap["py"])
     np.random.set_state(snap["np"])
     torch.random.set_rng_state(snap["tc"])
     if snap["tcu"] is not None:
         torch.cuda.set_rng_state_all(snap["tcu"])
+
+def _seed_for_record(rec_id, base_seed):
+    h = hashlib.sha256(str(rec_id).encode()).digest()
+    return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
 
 class BoltzWrapper:
     def __init__(self):
@@ -63,12 +66,12 @@ class BoltzWrapper:
         self.output_dir = os.path.join(self.tmp_dir, "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
 
-        base_seed = 68
-        random.seed(base_seed)
-        np.random.seed(base_seed)
-        torch.manual_seed(base_seed)
+        self.base_seed = 68
+        random.seed(self.base_seed)
+        np.random.seed(self.base_seed)
+        torch.manual_seed(self.base_seed)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(base_seed)
+            torch.cuda.manual_seed_all(self.base_seed)
 
         self._rng0 = _snapshot_rng()
         bt.logging.debug("BoltzWrapper initialized with deterministic baseline")
@@ -78,7 +81,7 @@ class BoltzWrapper:
         self.protein_sequence = get_sequence_from_protein_code(self.subnet_config['weekly_target'])
 
         # Collect all unique molecules across all UIDs
-        self.unique_molecules = {}  # {smiles: [(uid, mol_idx), ...]}
+        self.unique_molecules = {}  # {smiles: [(uid, mol_id), ...]}
         
         bt.logging.info("Preprocessing data for Boltz2")
         for uid, valid_molecules in valid_molecules_by_uid.items():
@@ -109,7 +112,9 @@ class BoltzWrapper:
             for smiles in boltz_candidates_smiles:
                 if smiles not in self.unique_molecules:
                     self.unique_molecules[smiles] = []
-                mol_idx = list(self.unique_molecules.keys()).index(smiles)
+                rec_id = smiles + self.protein_sequence #+ final_block_hash
+                mol_idx = _seed_for_record(rec_id, self.base_seed)
+
                 self.unique_molecules[smiles].append((uid, mol_idx))
         bt.logging.info(f"Unique Boltz candidates: {self.unique_molecules}")
 
@@ -193,7 +198,8 @@ properties:
     def postprocess_data(self, score_dict: dict) -> None:
         # Collect scores - Results need to be saved to disk because of distributed predictions
         scores = {}
-        for mol_idx, smiles in enumerate(self.unique_molecules.keys()):
+        for smiles, id_list in self.unique_molecules.items():
+            mol_idx = id_list[0][1] # unique molecule identifier, same for all UIDs
             results_path = os.path.join(self.output_dir, 'boltz_results_inputs', 'predictions', f'{mol_idx}')
             if mol_idx not in scores:
                 scores[mol_idx] = {}

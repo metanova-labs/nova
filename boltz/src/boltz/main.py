@@ -117,8 +117,8 @@ class Boltz2DiffusionParams:
     sigma_data: float = 16.0
     P_mean: float = -1.2
     P_std: float = 1.5
-    coordinate_augmentation: bool = True
-    alignment_reverse_diff: bool = True
+    coordinate_augmentation: bool = False
+    alignment_reverse_diff: bool = False
     synchronize_sigmas: bool = True
 
 
@@ -758,7 +758,6 @@ def _set_kernel_determinism():
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
 
 def _snapshot_rng():
-    import random, numpy as np, torch
     return {
         "py":  random.getstate(),
         "np":  np.random.get_state(),
@@ -767,7 +766,6 @@ def _snapshot_rng():
     }
 
 def _restore_rng(snap):
-    import random, numpy as np, torch
     random.setstate(snap["py"])
     np.random.set_state(snap["np"])
     torch.random.set_rng_state(snap["tc"])
@@ -775,7 +773,6 @@ def _restore_rng(snap):
         torch.cuda.set_rng_state_all(snap["tcu"])
 
 def _make_gen(seed: int, device: str = "cuda"):
-    import torch
     g = torch.Generator(device=device if torch.cuda.is_available() else "cpu")
     g.manual_seed(seed)
     return g
@@ -798,7 +795,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     write_full_pae: bool = False,
     write_full_pde: bool = False,
     output_format: Literal["pdb", "mmcif"] = "mmcif",
-    num_workers: int = 0,
+    num_workers: int = 2,
     override: bool = False,
     seed: Optional[int] = None,
     use_msa_server: bool = False,
@@ -1041,20 +1038,21 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
-        # ----- BASELINE SNAPSHOT (structure) -----
-        structure_rng0 = _snapshot_rng()
-
         if not batch_predictions:
-            # Predict one input at a time, seeding by record id
+            # Predict one input at a time, seeding by record id - record.id is already hashed on wrapper
             for record in filtered_manifest.records:
-                h = hashlib.sha256(str(record.affinity.mw).encode()).digest()
-                base = int(seed) if (seed is not None) else 0
-                rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
-                if seed is not None:
-                    seed_everything(rec_seed, workers=True)
+                if isinstance(record.id, str):
+                    h = hashlib.sha256(str(record.id).encode()).digest()
+                    base = int(seed) if (seed is not None) else 0
+                    rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
+                elif isinstance(record.id, int) and record.id >= 0:
+                    rec_seed = record.id
+                else:
+                    click.echo(f"Record id must be a string or int, got {type(record.id)}. Setting seed to {seed}")
+                    rec_seed = seed
 
-                # RESTORE baseline RNG for structure stage
-                _restore_rng(structure_rng0)
+                if rec_seed is not None:
+                    seed_everything(rec_seed, workers=True)
 
                 single_manifest = Manifest([record])
                 data_module = Boltz2InferenceDataModule(
@@ -1078,8 +1076,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                             return_predictions=False,
                         )
         else:
-            # Batched prediction (existing behavior)
-            _restore_rng(structure_rng0)  # one baseline per whole batch call
+            # Batched prediction (original behavior, with fixed seed)
             data_module = Boltz2InferenceDataModule(
                 manifest=processed.manifest,
                 target_dir=processed.targets_dir,
@@ -1160,19 +1157,20 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Swap writer callback
         trainer.callbacks[0] = pred_writer
 
-        # ----- BASELINE SNAPSHOT (affinity) -----
-        affinity_rng0 = _snapshot_rng()
-
         if not batch_predictions:
-            for record in manifest_filtered.records:
-                h = hashlib.sha256(str(record.affinity.mw).encode()).digest()
-                base = int(seed) if (seed is not None) else 0
-                rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
-                if seed is not None:
-                    seed_everything(int(rec_seed), workers=True)
+            # Predict one input at a time, seeding by record id - record.id is already hashed on wrapper
+            for record in filtered_manifest.records:
+                if isinstance(record.id, str):
+                    h = hashlib.sha256(str(record.id).encode()).digest()
+                    base = int(seed) if (seed is not None) else 0
+                    rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
+                elif isinstance(record.id, int) and record.id >= 0:
+                    rec_seed = record.id
+                else:
+                    rec_seed = seed
 
-                # RESTORE baseline RNG for affinity stage
-                _restore_rng(affinity_rng0)
+                if rec_seed is not None:
+                    seed_everything(rec_seed, workers=True)
 
                 single_manifest = Manifest([record])
                 data_module = Boltz2InferenceDataModule(
@@ -1195,7 +1193,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                             return_predictions=False,
                         )
         else:
-            _restore_rng(affinity_rng0)
             data_module = Boltz2InferenceDataModule(
                 manifest=manifest_filtered,
                 target_dir=out_dir / "predictions",
