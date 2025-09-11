@@ -175,7 +175,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 current_epoch=current_epoch,
                 current_block=set_weights_call_block,
                 validator_hotkey=wallet.hotkey.ss58_address,
-                winning_uid=winning_uid
+                winning_uid=winner_psichic
             )
 
         return winner_psichic, winner_boltz

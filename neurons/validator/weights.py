@@ -38,10 +38,12 @@ async def set_weights(winner_psichic, winner_boltz, config):
         n = len(metagraph.uids)
         weights = [0.0] * n
 
-        # Validate the user-provided target UID
-        if not (0 <= target_uid < n):
-            bt.logging.error(f"Error: target_uid {target_uid} out of range [0, {n-1}]. Exiting.")
-            return
+        # Validate the user-provided target UIDs
+        for target_uid in [winner_psichic, winner_boltz]:
+            if target_uid is not None:
+                if not (0 <= target_uid < n):
+                    bt.logging.error(f"Error: target_uid {target_uid} out of range [0, {n-1}]. Exiting.")
+                    return
 
         # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
