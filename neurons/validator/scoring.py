@@ -13,7 +13,7 @@ psichic = None
 BASE_DIR = None
 
 
-def score_all_proteins_batched(
+def score_all_proteins_psichic(
     target_proteins: list[str],
     antitarget_proteins: list[str],
     score_dict: dict[int, dict[str, list[list[float]]]],
@@ -34,6 +34,11 @@ def score_all_proteins_batched(
         batch_size: Number of molecules to process in each batch
     """
     global psichic, BASE_DIR
+    
+    # Ensure psichic is initialized
+    if psichic is None:
+        bt.logging.error("PSICHIC model not initialized.")
+        return
     
     all_proteins = target_proteins + antitarget_proteins
     
@@ -129,6 +134,10 @@ def score_all_proteins_batched(
 def score_molecule_individually(smiles: str) -> float:
     """Helper function to score a single molecule."""
     global psichic
+    
+    if psichic is None:
+        bt.logging.error("PSICHIC model not initialized.")
+        return -math.inf
     
     try:
         results_df = psichic.run_validation([smiles])
