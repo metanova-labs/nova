@@ -161,7 +161,15 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         # Monitor validators
         if not bool(getattr(config, 'test_mode', False)):
-            set_weights_call_block = await subtensor.get_current_block()
+            try:
+                set_weights_call_block = await subtensor.get_current_block()
+            except asyncio.CancelledError:
+                bt.logging.info("Resetting subtensor connection.")
+                subtensor = bt.async_subtensor(network=config.network)
+                await subtensor.initialize()
+                await asyncio.sleep(1)
+                set_weights_call_block = await subtensor.get_current_block()
+
             monitor_validator(
                 score_dict=score_dict,
                 metagraph=metagraph,
