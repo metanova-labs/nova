@@ -25,6 +25,7 @@ from neurons.validator.scoring import score_all_proteins_psichic
 import neurons.validator.scoring as scoring_module
 from neurons.validator.ranking import calculate_final_scores, determine_winner
 from neurons.validator.monitoring import monitor_validator
+from neurons.validator.save_data import submit_epoch_results
 
 # Initialize global components (lazy loading for models)
 psichic = None
@@ -158,6 +159,28 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
+
+        # Submit results to dashboard API if configured
+        try:
+            submit_url = os.environ.get('SUBMIT_RESULTS_URL')
+            if submit_url:
+                await submit_epoch_results(
+                    submit_url=submit_url,
+                    config=config,
+                    metagraph=metagraph,
+                    boltz=boltz,
+                    current_block=current_block,
+                    start_block=start_block,
+                    current_epoch=current_epoch,
+                    target_proteins=target_proteins,
+                    antitarget_proteins=antitarget_proteins,
+                    uid_to_data=uid_to_data,
+                    valid_molecules_by_uid=valid_molecules_by_uid,
+                    molecule_name_counts=molecule_name_counts,
+                    score_dict=score_dict
+                )
+        except Exception as e:
+            bt.logging.error(f"Failed to submit results to dashboard API: {e}")
 
         # Monitor validators
         if not bool(getattr(config, 'test_mode', False)):
