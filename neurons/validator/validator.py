@@ -169,7 +169,6 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 await subtensor.initialize()
                 await asyncio.sleep(1)
                 set_weights_call_block = await subtensor.get_current_block()
-
             monitor_validator(
                 score_dict=score_dict,
                 metagraph=metagraph,
