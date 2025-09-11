@@ -172,14 +172,14 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                     molecule_name_counts=molecule_name_counts,
                     score_dict=score_dict
                 )
-        # After results submission, clean up Boltz and reset CUDA
-        if boltz is not None:
-            try:
-                boltz.cleanup_model()
-            except Exception:
-                pass
-        boltz = None
-        reset_cuda_context()
+            # After results submission, clean up Boltz and reset CUDA
+            if boltz is not None:
+                try:
+                    boltz.cleanup_model()
+                except Exception:
+                    pass
+            boltz = None
+            reset_cuda_context()
         except Exception as e:
             bt.logging.error(f"Failed to submit results to dashboard API: {e}")
 
