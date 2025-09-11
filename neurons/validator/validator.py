@@ -141,13 +141,6 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             bt.logging.info("Boltz model initialized successfully")
         
         boltz.score_molecules_target(valid_molecules_by_uid, score_dict, config, final_block_hash)
-        
-        # Clean up Boltz model to free GPU memory
-        boltz.cleanup_model()
-        boltz = None
-        
-        # Reset CUDA context for next epoch
-        reset_cuda_context()
 
         # Calculate final scores
         score_dict = calculate_final_scores(
@@ -179,6 +172,14 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                     molecule_name_counts=molecule_name_counts,
                     score_dict=score_dict
                 )
+        # After results submission, clean up Boltz and reset CUDA
+        if boltz is not None:
+            try:
+                boltz.cleanup_model()
+            except Exception:
+                pass
+        boltz = None
+        reset_cuda_context()
         except Exception as e:
             bt.logging.error(f"Failed to submit results to dashboard API: {e}")
 
