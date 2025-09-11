@@ -4,6 +4,8 @@ os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 import asyncio
 import sys
 import bittensor as bt
+import torch
+import gc
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(BASE_DIR)
@@ -20,25 +22,38 @@ from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
 from neurons.validator.validity import validate_molecules_and_calculate_entropy, count_molecule_names
 from neurons.validator.scoring import score_all_proteins_psichic
+import neurons.validator.scoring as scoring_module
 from neurons.validator.ranking import calculate_final_scores, determine_winner
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
 
-# Initialize global components
-psichic = PsichicWrapper()
-boltz = BoltzWrapper()
+# Initialize global components (lazy loading for models)
+psichic = None
+boltz = None
 btd = QuicknetBittensorDrandTimelock()
 GITHUB_HEADERS = {}
-
-# Set global variables for scoring module
-import neurons.validator.scoring as scoring_module
-scoring_module.psichic = psichic
 scoring_module.BASE_DIR = BASE_DIR
+
+def reset_cuda_context():
+    """Reset CUDA context to allow new processes to initialize."""
+    if torch.cuda.is_available():
+        # Clear all CUDA caches
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset memory stats
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.reset_accumulated_memory_stats()
+        # Force garbage collection
+        gc.collect()
+        # Small delay to ensure cleanup completes
+        import time
+        time.sleep(0.1)
 
 async def process_epoch(config, current_block, metagraph, subtensor, wallet):
     """
     Process a single epoch end-to-end.
     """
+    global psichic, boltz
     try:
         start_block = current_block - config.epoch_length
         start_block_hash = await subtensor.determine_block_hash(start_block)
@@ -94,6 +109,12 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # Count molecule name occurrences
         molecule_name_counts = count_molecule_names(valid_molecules_by_uid)
 
+        # Initialize and use PSICHIC model
+        if psichic is None:
+            psichic = PsichicWrapper()
+            scoring_module.psichic = psichic
+            bt.logging.info("PSICHIC model initialized successfully")
+        
         # Score all target proteins then all antitarget proteins one protein at a time
         score_all_proteins_psichic(
             target_proteins=target_proteins,
@@ -104,7 +125,29 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             batch_size=32
         )
 
+        # Clean up PSICHIC model to free GPU memory
+        psichic.cleanup_model()
+        psichic = None
+        scoring_module.psichic = None
+        
+        # Reset CUDA context to allow Boltz to initialize properly
+        bt.logging.info("Resetting CUDA context for Boltz initialization...")
+        reset_cuda_context()
+        
+        # Initialize and use Boltz model
+        if boltz is None:
+            bt.logging.info("Initializing Boltz model...")
+            boltz = BoltzWrapper()
+            bt.logging.info("Boltz model initialized successfully")
+        
         boltz.score_molecules_target(valid_molecules_by_uid, score_dict, config, final_block_hash)
+        
+        # Clean up Boltz model to free GPU memory
+        boltz.cleanup_model()
+        boltz = None
+        
+        # Reset CUDA context for next epoch
+        reset_cuda_context()
 
         # Calculate final scores
         score_dict = calculate_final_scores(
@@ -141,7 +184,14 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         # Monitor validators
         if not bool(getattr(config, 'test_mode', False)):
-            set_weights_call_block = await subtensor.get_current_block()
+            try:
+                set_weights_call_block = await subtensor.get_current_block()
+            except asyncio.CancelledError:
+                bt.logging.info("Resetting subtensor connection.")
+                subtensor = bt.async_subtensor(network=config.network)
+                await subtensor.initialize()
+                await asyncio.sleep(1)
+                set_weights_call_block = await subtensor.get_current_block()
             monitor_validator(
                 score_dict=score_dict,
                 metagraph=metagraph,

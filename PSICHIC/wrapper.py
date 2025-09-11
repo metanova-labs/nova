@@ -2,6 +2,7 @@ from .deterministic_init import setup_deterministic
 
 import os
 import json
+import gc
 
 import pandas as pd
 import torch
@@ -106,4 +107,26 @@ class PsichicWrapper:
                                            save_cluster=False,
                                            )
         return self.screen_df
+    
+    def clear_gpu_memory(self):
+        """Clear GPU memory and run garbage collection."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Reset CUDA context to allow other processes to initialize
+            torch.cuda.reset_peak_memory_stats()
+        gc.collect()
+    
+    def cleanup_model(self):
+        """Clean up model and free GPU memory."""
+        if hasattr(self, 'model') and self.model is not None:
+            del self.model
+            self.model = None
+        if hasattr(self, 'screen_loader'):
+            del self.screen_loader
+            self.screen_loader = None
+        if hasattr(self, 'screen_df'):
+            del self.screen_df
+            self.screen_df = None
+        self.clear_gpu_memory()
         

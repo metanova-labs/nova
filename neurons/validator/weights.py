@@ -3,7 +3,7 @@ import argparse
 import bittensor as bt
 import os
 from dotenv import load_dotenv
-import time
+import asyncio
 
 async def set_weights(winner_psichic, winner_boltz, config):
     if winner_psichic is not None or winner_boltz is not None:
@@ -46,8 +46,11 @@ async def set_weights(winner_psichic, winner_boltz, config):
         # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
         if winner_psichic and winner_boltz:
-            weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
-            weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
+            if winner_psichic == winner_boltz:
+                weights[winner_psichic] = 1.0 - burn_rate
+            else:
+                weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
+                weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
 
         elif winner_psichic and not winner_boltz:
             weights[winner_psichic] = 1.0 - burn_rate
@@ -81,14 +84,14 @@ async def set_weights(winner_psichic, winner_boltz, config):
                     bt.logging.info("set_weights returned a non-success response. Will retry if attempts remain.")
                     if attempt < max_retries - 1:
                         bt.logging.info(f"Retrying in {delay_between_retries} seconds...")
-                        time.sleep(delay_between_retries)
+                        await asyncio.sleep(delay_between_retries)
 
             except Exception as e:
                 bt.logging.error(f"Error setting weights: {e}")
 
                 if attempt < max_retries - 1:
                     bt.logging.info(f"Retrying in {delay_between_retries} seconds...")
-                    time.sleep(delay_between_retries)
+                    await asyncio.sleep(delay_between_retries)
                 else:
                     bt.logging.error("Failed to set weights after multiple attempts. Exiting.")
                     return
