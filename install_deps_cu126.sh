@@ -27,7 +27,7 @@ uv venv && source .venv/bin/activate \
         && uv pip install torch-geometric==2.6.1 \
         && uv pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.7.0+cu126.html \
         && uv pip install patchelf \
-        && uv pip install maturin==1.8.3
+        && uv pip install maturin==1.8.3 \
         && uv pip install -e boltz
 
 # Build timelock Python bindings (WASM)
