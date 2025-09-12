@@ -45,13 +45,18 @@ def _build_competition_payload(config, current_epoch: int, target_proteins: list
 
 def _get_boltz_selected_map_for_uid(boltz, uid: int, smiles_list: list[str]) -> list[bool | None]:
     try:
+        if not smiles_list:
+            return []
+        unique = getattr(boltz, 'unique_molecules', None)
+        if not isinstance(unique, dict):
+            return [ None for _ in smiles_list ]
         selected = set()
-        for smiles, pairs in getattr(boltz, 'unique_molecules', {}).items():
+        for smiles, pairs in unique.items():
             if any(pair_uid == uid for pair_uid, _ in pairs):
                 selected.add(smiles)
-        return [ (s in selected) for s in smiles_list ] if smiles_list else []
+        return [ (s in selected) for s in smiles_list ]
     except Exception:
-        return [ None for _ in smiles_list ] if smiles_list else []
+        return [ None for _ in smiles_list ]
 
 
 def _build_submissions_payload(config, metagraph, boltz, current_block: int, start_block: int, uid_to_data: dict, valid_molecules_by_uid: dict, molecule_name_counts: dict, score_dict: dict) -> list[dict]:

@@ -196,7 +196,7 @@ properties:
 
         # Collect scores and distribute results to all UIDs
         self.postprocess_data(score_dict)
-        self.cleanup_model()
+        # Defer cleanup tp preserve unique_molecules for result submission
 
     def postprocess_data(self, score_dict: dict) -> None:
         # Collect scores - Results need to be saved to disk because of distributed predictions
