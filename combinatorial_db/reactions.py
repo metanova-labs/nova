@@ -189,13 +189,9 @@ def react_three_components(rxn_id: int, mol1_id: int, mol2_id: int, mol3_id: int
             amide_smarts = "[C:1](=O)[OH].[N:2]>>[C:1](=O)[N:2]"
             return perform_smarts_reaction(triazole_cooh, reactant3, amide_smarts)
         
-        if rxn_id == 6:  # suzuki_bromide_then_chloride (two-step cascade)
-            br_info = get_reaction_info(4, db_path)
-            cl_info = get_reaction_info(5, db_path)
-            if not br_info or not cl_info:
-                return None
-            suzuki_br_smarts = br_info[0]
-            suzuki_cl_smarts = cl_info[0]
+        if rxn_id == 5:  # suzuki_bromide_then_chloride (two-step cascade)
+            suzuki_br_smarts = "[#6:1][Br].[#6:2][B]([OH])[OH]>>[#6:1][#6:2]"
+            suzuki_cl_smarts = "[#6:1][Cl].[#6:2][B]([OH])[OH]>>[#6:1][#6:2]"
 
             # First couple at bromide
             intermediate = perform_smarts_reaction(reactant1, reactant2, suzuki_br_smarts)
