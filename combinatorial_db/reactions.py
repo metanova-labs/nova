@@ -104,21 +104,23 @@ def validate_and_order_reactants(smiles1: str, smiles2: str, role_mask1: int, ro
     """Validate reactants can react and return in correct order."""
     try:
         if smiles3 is None:
-            can_react = ((role_mask1 & roleA) and (role_mask2 & roleB)) or ((role_mask1 & roleB) and (role_mask2 & roleA))
+            # Require all bits in the role to be present in the molecule's role_mask
+            can_react = (((role_mask1 & roleA) == roleA) and ((role_mask2 & roleB) == roleB)) or \
+                        (((role_mask1 & roleB) == roleB) and ((role_mask2 & roleA) == roleA))
             if not can_react:
                 return None, None
             
             # Order reactants based on roles
-            if (role_mask1 & roleA) and (role_mask2 & roleB):
+            if ((role_mask1 & roleA) == roleA) and ((role_mask2 & roleB) == roleB):
                 return smiles1, smiles2
             else:
                 return smiles2, smiles1
         
         else:
             # Check if first two molecules are valid for their roles
-            can_react_12 = ((role_mask1 & roleA) and (role_mask2 & roleB)) or ((role_mask1 & roleB) and (role_mask2 & roleA))
-            # Check if third molecule is valid for its role
-            can_react_3 = role_mask3 & roleC
+            can_react_12 = (((role_mask1 & roleA) == roleA) and ((role_mask2 & roleB) == roleB)) or \
+                            (((role_mask1 & roleB) == roleB) and ((role_mask2 & roleA) == roleA))
+            can_react_3 = (role_mask3 & roleC) == roleC
             
             if not can_react_12 or not can_react_3:
                 return None, None, None
@@ -186,6 +188,19 @@ def react_three_components(rxn_id: int, mol1_id: int, mol2_id: int, mol3_id: int
             # Amide coupling
             amide_smarts = "[C:1](=O)[OH].[N:2]>>[C:1](=O)[N:2]"
             return perform_smarts_reaction(triazole_cooh, reactant3, amide_smarts)
+        
+        if rxn_id == 5:  # suzuki_bromide_then_chloride (two-step cascade)
+            suzuki_br_smarts = "[#6:1][Br].[#6:2][B]([OH])[OH]>>[#6:1][#6:2]"
+            suzuki_cl_smarts = "[#6:1][Cl].[#6:2][B]([OH])[OH]>>[#6:1][#6:2]"
+
+            # First couple at bromide
+            intermediate = perform_smarts_reaction(reactant1, reactant2, suzuki_br_smarts)
+            if not intermediate:
+                return None
+
+            # Then couple at chloride
+            final_product = perform_smarts_reaction(intermediate, reactant3, suzuki_cl_smarts)
+            return final_product
         
         return None
         
