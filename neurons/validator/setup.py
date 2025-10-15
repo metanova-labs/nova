@@ -1,8 +1,9 @@
 import argparse
 import os
 import sys
-from dotenv import load_dotenv
+
 import bittensor as bt
+from dotenv import load_dotenv
 from substrateinterface import SubstrateInterface
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -25,9 +26,10 @@ def get_config():
 
     config = bt.config(parser)
     config.netuid = 68
-    config.network = os.environ.get("SUBTENSOR_NETWORK")
-    node = SubstrateInterface(url=config.network)
-    config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value + 1
+    config.network = os.environ.get("SUBTENSOR_NETWORK", "finney")
+
+    with bt.subtensor(config.network) as subtensor:
+        config.epoch_length = subtensor.tempo(netuid=config.netuid) + 1
 
     # Load configuration options
     config.update(load_config())
