@@ -186,13 +186,14 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # Monitor validators
         if not bool(getattr(config, 'test_mode', False)):
             try:
-                set_weights_call_block = await subtensor.get_current_block()
-            except asyncio.CancelledError:
-                bt.logging.info("Resetting subtensor connection.")
-                subtensor = bt.async_subtensor(network=config.network)
-                await subtensor.initialize()
-                await asyncio.sleep(1)
-                set_weights_call_block = await subtensor.get_current_block()
+                bt.logging.info("Starting To Get Current block")
+                set_weights_call_block = asyncio.create_task(subtensor.get_current_block())
+                await asyncio.wait_for(set_weights_call_block, timeout=10.0)
+                set_weights_call_block = set_weights_call_block.result()
+            except asyncio.TimeoutError:
+                bt.logging.info("Timeout connecting to subtensor while getting current block.")
+            except Exception as e:
+                bt.logging.info(f"Issue connecting to subtensor while getting current block. exception {e}")
             monitor_validator(
                 score_dict=score_dict,
                 metagraph=metagraph,
@@ -215,8 +216,7 @@ async def main(config):
     test_mode = bool(getattr(config, 'test_mode', False))
     
     # Initialize subtensor client
-    subtensor = bt.async_subtensor(network=config.network)
-    await subtensor.initialize()
+    subtensor = bt.AsyncSubtensor(network=config.network)
     
     # Wallet + registration check (skipped in test mode)
     wallet = None
@@ -245,13 +245,16 @@ async def main(config):
     while True:
         try:
             metagraph = await subtensor.metagraph(config.netuid)
-            current_block = await subtensor.get_current_block()
+            current_block = asyncio.create_task(subtensor.get_current_block())
+            await asyncio.wait_for(current_block, timeout=10.0)
+            current_block = current_block.result()
 
             if current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
                 winner_psichic, winner_boltz = await process_epoch(config, current_block, metagraph, subtensor, wallet)
                 if not test_mode:
+                    bt.logging.info("Setting weights on chain...")
                     await set_weights(winner_psichic, winner_boltz, config)
                 
             else:
@@ -262,13 +265,6 @@ async def main(config):
                     last_logged_blocks_remaining = blocks_remaining
                 await asyncio.sleep(1)
                 
- 
-        except asyncio.CancelledError:
-            bt.logging.info("Resetting subtensor connection.")
-            subtensor = bt.async_subtensor(network=config.network)
-            await subtensor.initialize()
-            await asyncio.sleep(1)
-            continue
         except Exception as e:
             bt.logging.error(f"Error in main loop: {e}")
             await asyncio.sleep(3)
