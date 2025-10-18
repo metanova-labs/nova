@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # credits: Rhef
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 import asyncio
 import base64
 import hashlib
@@ -10,6 +10,7 @@ import secrets
 import time
 
 from cryptography.fernet import Fernet
+import os
 import requests
 import timelock
 import bittensor as bt
@@ -27,17 +28,30 @@ class DrandClient:
     RETRY_LIMIT = 30
     RETRY_BACKOFF_S = 2
 
-    def __init__(self, url):
-        """Initialize a requests session for better performance."""
+    def __init__(self, base_urls: List[str]):
+        """Initialize a requests session and list of base URLs for failover."""
         self.session: requests.Session = requests.Session()
-        self.url = url
+        self.base_urls = list(base_urls)
+        # index of current base url in rotation
+        self._idx = 0
 
     def get(self, round_number: int, retry_if_too_early=False) -> str:
         """Fetch the randomness for a given round, using cache to prevent duplicate requests."""
         a = 0
         while a <= self.RETRY_LIMIT:
             a += 1
-            response: requests.Response = self.session.get(f"{self.url}/public/{round_number}")
+            base = self.base_urls[self._idx % len(self.base_urls)]
+            try:
+                response: requests.Response = self.session.get(
+                    f"{base}/public/{round_number}", timeout=8
+                )
+            except requests.exceptions.RequestException as e:
+                bt.logging.warning(
+                    f"drand endpoint error on {base}: {e}; rotating"
+                )
+                self._idx += 1
+                time.sleep(self.RETRY_BACKOFF_S)
+                continue
             if response.status_code == 200:
                 break
             elif response.status_code in (404, 425):
@@ -47,8 +61,10 @@ class DrandClient:
                         response.raise_for_status()
                     except Exception as e:
                         raise TooEarly() from e
-            elif response.status_code == 500:
+            elif response.status_code >= 500:
                 bt.logging.debug(f'{response.status_code} {response} {response.headers} {response.text}')
+                # rotate on server errors
+                self._idx += 1
             time.sleep(self.RETRY_BACKOFF_S)
             continue
         response.raise_for_status()
@@ -59,14 +75,22 @@ class DrandClient:
 
 class AbstractBittensorDrandTimelock:
     """Class for Drand-based timelock encryption and decryption using the timelock library."""
-    #DRAND_URL: str = "https://api.drand.sh"  # more 500 than 200
-    DRAND_URL: str = "https://drand.cloudflare.com"
+    # Preferred endpoints order; env override DRAND_URLS can provide a comma-separated list
+    DRAND_URLS: List[str] = [
+        "https://api.drand.sh",
+        "https://drand.cloudflare.com",
+        "https://api2.drand.sh",
+    ]
     EPOCH_LENGTH = 361  # Number of blocks per epoch
 
     def __init__(self) -> None:
         """Initialize the Timelock client."""
         self.tl = timelock.Timelock(self.PK_HEX)
-        self.drand_client = DrandClient(f'{self.DRAND_URL}/{self.CHAIN}')
+        # allow comma-separated override
+        env_urls = os.environ.get("DRAND_URLS")
+        urls = [u.strip() for u in env_urls.split(",")] if env_urls else self.DRAND_URLS
+        base_urls = [f"{u}/{self.CHAIN}" for u in urls if u]
+        self.drand_client = DrandClient(base_urls)
 
     def _get_drand_round_info(self, round_number: int, cache: Dict[int, str]):
         """Fetch the randomness for a given round, using a cache to prevent duplicate requests."""
