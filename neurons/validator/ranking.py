@@ -102,9 +102,20 @@ def calculate_final_scores(
         if score_dict[uid]['final_score'] > config['entropy_bonus_threshold'] and entropy is not None:
             score_dict[uid]['final_score'] = score_dict[uid]['final_score'] * (1 + (dynamic_entropy_weight * entropy))
 
-        if all(v is not None for v in [score_dict[uid]['boltz_score'], score_dict[uid]['entropy_boltz']]):
-            if score_dict[uid]['boltz_score'] > config['entropy_bonus_threshold'] and config['num_molecules_boltz'] > 1:
-                score_dict[uid]['boltz_score'] = score_dict[uid]['boltz_score'] * (1 + (dynamic_entropy_weight * score_dict[uid]['entropy_boltz']))
+        boltz_score = score_dict[uid]['boltz_score']
+        entropy_boltz = score_dict[uid]['entropy_boltz']
+        threshold_boltz = config.get('entropy_bonus_threshold')
+
+        if (
+            boltz_score is not None
+            and entropy_boltz is not None
+            and math.isfinite(boltz_score)
+            and math.isfinite(entropy_boltz)
+            and boltz_score > threshold_boltz
+            and entropy_boltz > 0
+            and config['num_molecules_boltz'] > 1
+        ):
+            score_dict[uid]['boltz_score'] = boltz_score * (1 + (dynamic_entropy_weight * entropy_boltz))
 
         # Log details
         # Prepare detailed log info
@@ -197,6 +208,12 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
     if not best_uids_psichic and not best_uids_boltz:
         bt.logging.info("No valid winner found (all scores -inf or no submissions).")
         return None, None
+
+    # Treat all -inf as no valid winners for each model
+    if best_score_psichic == -math.inf:
+        best_uids_psichic = []
+    if best_score_boltz == -math.inf:
+        best_uids_boltz = []
     
     # Select winner from each model
     if best_uids_psichic:

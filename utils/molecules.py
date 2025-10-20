@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import time
 from rdkit import Chem
-from rdkit.Chem import MACCSkeys
+from rdkit.Chem import MACCSkeys, AllChem
 from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
 from huggingface_hub.errors import EntryNotFoundError
 import bittensor as bt
@@ -39,6 +39,25 @@ def get_smiles(product_name):
     data = response.json()
 
     return data.get("smiles")
+
+def is_boltz_safe_smiles(smiles: str) -> tuple[bool, str | None]:
+    """
+    Replicates Boltz atom-name generation and enforces <= 4 characters.
+    Returns (ok, reason). ok=False means the SMILES should be rejected for Boltz.
+    """
+    try:
+        mol = AllChem.MolFromSmiles(smiles)
+        if mol is None:
+            return False, "RDKit failed to parse SMILES"
+        mol = AllChem.AddHs(mol)
+        canonical_order = AllChem.CanonicalRankAtoms(mol)
+        for atom, can_idx in zip(mol.GetAtoms(), canonical_order):
+            atom_name = atom.GetSymbol().upper() + str(can_idx + 1)
+            if len(atom_name) > 4:
+                return False, f"Atom name would exceed 4 chars: {atom_name}"
+        return True, None
+    except Exception as e:
+        return False, f"Boltz safety check failed: {e}"
 
 
 def get_heavy_atom_count(smiles: str) -> int:

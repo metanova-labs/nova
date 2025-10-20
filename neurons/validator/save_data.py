@@ -109,7 +109,7 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
                 "combined_score": _safe_num(combined_scores[idx] if idx < len(combined_scores) else -math.inf),
                 "score_after_repetition": _safe_num(scores_after_repetition[idx] if idx < len(scores_after_repetition) else -math.inf),
                 "boltz_selected": (boltz_selected_flags[idx] if idx < len(boltz_selected_flags) else None),
-                "boltz_score": (None if per_mol_boltz is None else float(per_mol_boltz)),
+                "boltz_score": (None if per_mol_boltz is None else _safe_num(float(per_mol_boltz))),
             })
 
         submissions.append({
@@ -122,7 +122,7 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
             "molecules": molecule_details,
             "entropy": (entropy if (entropy is not None and final_score_safe > getattr(config, 'entropy_bonus_threshold', 0.0)) else 0),
             "final_score": final_score_safe,
-            "final_boltz_score": (None if boltz_score is None else float(boltz_score)),
+            "final_boltz_score": (None if boltz_score is None else _safe_num(float(boltz_score))),
             "boltz_entropy": (None if boltz_entropy is None else float(boltz_entropy)),
         })
 
