@@ -8,6 +8,7 @@ import random
 import gc
 import shutil
 import hashlib
+import math
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -30,7 +31,7 @@ import bittensor as bt
 
 from src.boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
-from utils.molecules import compute_maccs_entropy
+from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles
 
 def _snapshot_rng():
     return {
@@ -114,6 +115,10 @@ class BoltzWrapper:
                 score_dict[uid]["entropy_boltz"] = None
 
             for smiles in boltz_candidates_smiles:
+                ok, reason = is_boltz_safe_smiles(smiles)
+                if not ok:
+                    bt.logging.warning(f"Skipping Boltz candidate {smiles} because it is not parseable: {reason}")
+                    continue
                 if smiles not in self.unique_molecules:
                     self.unique_molecules[smiles] = []
                 rec_id = smiles + self.protein_sequence #+ final_block_hash
@@ -243,7 +248,7 @@ properties:
             if uid in final_boltz_scores:
                 data['boltz_score'] = np.mean(final_boltz_scores[uid])
             else:
-                data['boltz_score'] = None
+                data['boltz_score'] = -math.inf
     
     def clear_gpu_memory(self):
         """Clear GPU memory and run garbage collection."""
