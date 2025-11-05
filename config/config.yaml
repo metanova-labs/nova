@@ -39,4 +39,4 @@ reaction_filtering:
 competition:
   # No submission blocks
   no_submission_blocks: 10
-  boltz_weight: 0.5 # proportion of incentive to give to Boltz2 winner
+  boltz_weight: 0.833 # proportion of incentive to give to Boltz2 winner
