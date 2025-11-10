@@ -57,7 +57,7 @@ def score_all_proteins_psichic(
         except Exception as e:
             try:
                 if BASE_DIR:
-                    os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT2/model.pt')} https://huggingface.co/Metanova/TREAT-2/resolve/main/model.pt")
+                    os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt")
                 psichic.run_challenge_start(protein_sequence)
                 bt.logging.info('Model initialized successfully.')
             except Exception as e:
