@@ -9,7 +9,7 @@ async def set_weights(winner_psichic, winner_boltz, config):
     if winner_psichic is not None or winner_boltz is not None:
         load_dotenv()
         
-        burn_rate = 0.684
+        burn_rate = 0.737
         
         wallet_name = config.wallet.name
         wallet_hotkey = config.wallet.hotkey
@@ -47,17 +47,23 @@ async def set_weights(winner_psichic, winner_boltz, config):
 
         # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
-        if winner_psichic and winner_boltz:
-            if winner_psichic == winner_boltz:
-                weights[winner_psichic] = 1.0 - burn_rate
-            else:
-                weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
-                weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
+        # if winner_psichic and winner_boltz:
+        #     if winner_psichic == winner_boltz:
+        #         weights[winner_psichic] = 1.0 - burn_rate
+        #     else:
+        #         weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
+        #         weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
 
-        elif winner_psichic and not winner_boltz:
-            weights[winner_psichic] = 1.0 - burn_rate
+        # elif winner_psichic and not winner_boltz:
+        #     weights[winner_psichic] = 1.0 - burn_rate
 
-        elif not winner_psichic and winner_boltz:
+        # elif not winner_psichic and winner_boltz:
+        #     weights[winner_boltz] = 1.0 - burn_rate
+        # else:
+        #     bt.logging.error("No valid molecule commitment found for current epoch.")
+        #     return
+
+        if winner_boltz:
             weights[winner_boltz] = 1.0 - burn_rate
         else:
             bt.logging.error("No valid molecule commitment found for current epoch.")

@@ -171,7 +171,7 @@ async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_blo
 
     # Decrypt submissions
     decrypted_submissions, push_timestamps = decrypt_submissions(
-        current_commitments, github_headers, btd, {"num_molecules": 100}  # Default config
+        current_commitments, github_headers, btd, {"num_molecules": 1}  # Default config
     )
 
     # Prepare structured data
