@@ -98,9 +98,9 @@ def calculate_final_scores(
         score_dict[uid]['molecule_scores_after_repetition'] = molecule_scores_after_repetition
         score_dict[uid]['final_score'] = sum(molecule_scores_after_repetition)
                 
-        # Apply entropy bonus for scores above threshold
-        if score_dict[uid]['final_score'] > config['entropy_bonus_threshold'] and entropy is not None:
-            score_dict[uid]['final_score'] = score_dict[uid]['final_score'] * (1 + (dynamic_entropy_weight * entropy))
+        # Apply entropy bonus for scores above threshold - disabled while num_molecules is 1
+        # if score_dict[uid]['final_score'] > config['entropy_bonus_threshold'] and entropy is not None:
+        #     score_dict[uid]['final_score'] = score_dict[uid]['final_score'] * (1 + (dynamic_entropy_weight * entropy))
 
         boltz_score = score_dict[uid]['boltz_score']
         entropy_boltz = score_dict[uid]['entropy_boltz']
@@ -128,13 +128,13 @@ def calculate_final_scores(
             f"UID={uid}",
             f"  Molecule names: {names_list}",
             f"  SMILES: {smiles_list}",
-            f"  Target scores per molecule: {target_scores_per_mol}",
-            f"  Antitarget scores per molecule: {antitarget_scores_per_mol}",
-            f"  Entropy: {entropy}",
+            # f"  Target scores per molecule: {target_scores_per_mol}",
+            # f"  Antitarget scores per molecule: {antitarget_scores_per_mol}",
+            #f"  Entropy: {entropy}",
             f"  Boltz scores: {score_dict[uid]['boltz_score']}",
-            f"  Entropy Boltz: {score_dict[uid]['entropy_boltz'] if score_dict[uid]['entropy_boltz'] is not None else 'None'}",
-            f"  Dynamic entropy weight: {dynamic_entropy_weight}",
-            f"  Final score: {score_dict[uid]['final_score']}"
+            #f"  Entropy Boltz: {score_dict[uid]['entropy_boltz'] if score_dict[uid]['entropy_boltz'] is not None else 'None'}",
+            #f"  Dynamic entropy weight: {dynamic_entropy_weight}",
+            #f"  Final score: {score_dict[uid]['final_score']}"
         ]
         bt.logging.info("\n".join(log_lines))
 
@@ -165,7 +165,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
             bt.logging.warning(f"Failed to parse timestamp '{ts}' for UID={uid}: {e}")
             return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
 
-    def tie_breaker(tied_uids: list[int], best_score: float, model_name: str):
+    def tie_breaker(tied_uids: list[int], best_score: float, model_name: str, print_message: bool = True):
         # Sort by block number first, then push time, then uid to ensure deterministic result
         winner = sorted(tied_uids, key=lambda uid: (
             score_dict[uid].get('block_submitted', float('inf')), 
@@ -181,7 +181,8 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
         if push_time:
             tiebreaker_message += f", push_time={push_time}"
             
-        bt.logging.info(tiebreaker_message)
+        if print_message:
+            bt.logging.info(tiebreaker_message)
             
         return winner
     
@@ -220,10 +221,10 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
         if len(best_uids_psichic) == 1:
             psichic_winner_block = score_dict[best_uids_psichic[0]].get('block_submitted')
             current_epoch = psichic_winner_block // 361 if psichic_winner_block else None
-            bt.logging.info(f"Epoch {current_epoch} PSICHIC winner: UID={best_uids_psichic[0]}, winning_score={best_score_psichic}")
+            #bt.logging.info(f"Epoch {current_epoch} PSICHIC winner: UID={best_uids_psichic[0]}, winning_score={best_score_psichic}")
             winner_psichic = best_uids_psichic[0]
         else:
-            winner_psichic = tie_breaker(best_uids_psichic, best_score_psichic, "PSICHIC")
+            winner_psichic = tie_breaker(best_uids_psichic, best_score_psichic, "PSICHIC", print_message=False)
     else:
         winner_psichic = None
     
