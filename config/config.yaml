@@ -1,6 +1,6 @@
 # Number of targets and antitargets to select
 protein_selection:
-  weekly_target: "P31652"
+  weekly_target: "P31645"
   num_antitargets: 1
 
 protein_constraints: # target only
@@ -15,13 +15,13 @@ molecule_validation:
   # Scoring weights for entropy
   entropy_bonus_threshold: 0
   entropy_start_weight: 0.3
-  entropy_start_epoch: 18982
+  entropy_start_epoch: 19122
   entropy_step_size: 0.007142857  # 1/140 to increase by 1.0 over about 1 week
   # Scoring weights for molecule repetition
   molecule_repetition_weight: 0
   molecule_repetition_threshold: 0
   # Molecular property requirements
-  min_heavy_atoms: 20
+  min_heavy_atoms: 10
   min_rotatable_bonds: 1
   max_rotatable_bonds: 10
   # Number of molecules to validate with PSICHIC
