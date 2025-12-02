@@ -303,16 +303,19 @@ async def run_psichic_model_loop(state: Dict[str, Any]) -> None:
                         state['candidate_product'] = ','.join(top_molecules['product_name'].tolist())
                         bt.logging.info(f"New best score: {state['best_score']}, Candidates: {state['candidate_product']}")
 
-                    # Only submit if we're close to epoch end (20 blocks away)
-                    # Check if we're close to epoch end (20 blocks away)
+                    # Submit in the safe window: 20 blocks before epoch, but not in last 11 blocks
+                    # (validators reject submissions in last 10 blocks, so we add 1 block buffer)
                     current_block = await state['subtensor'].get_current_block()
                     next_epoch_block = ((current_block // state['epoch_length']) + 1) * state['epoch_length']
                     blocks_until_epoch = next_epoch_block - current_block
                     
+                    SUBMISSION_WINDOW_START = 20
+                    SUBMISSION_WINDOW_END = 11  # Validator cutoff is 10, add 1 block buffer
+                    
                     bt.logging.debug(f"Current block: {current_block}, Epoch length: {state['epoch_length']}, Next epoch block: {next_epoch_block}, Blocks until epoch: {blocks_until_epoch}")
                     
-                    if state['candidate_product'] and blocks_until_epoch <= 20:
-                        bt.logging.info(f"Close to epoch end ({blocks_until_epoch} blocks remaining), attempting submission...")
+                    if state['candidate_product'] and SUBMISSION_WINDOW_END <= blocks_until_epoch <= SUBMISSION_WINDOW_START:
+                        bt.logging.info(f"In submission window ({blocks_until_epoch} blocks remaining), attempting submission...")
                         if state['candidate_product'] != state['last_submitted_product']:
                             bt.logging.info("Attempting to submit new candidate...")
                             try:
@@ -321,6 +324,8 @@ async def run_psichic_model_loop(state: Dict[str, Any]) -> None:
                                 bt.logging.error(f"Error submitting response: {e}")
                         else:
                             bt.logging.info("Skipping submission - same product as last submission")
+                    elif state['candidate_product'] and blocks_until_epoch < SUBMISSION_WINDOW_END:
+                        bt.logging.warning(f"Too close to epoch end ({blocks_until_epoch} blocks), submission would be rejected by validators")
 
                 await asyncio.sleep(2)
 
