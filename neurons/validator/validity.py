@@ -42,6 +42,7 @@ def validate_molecules_and_calculate_entropy(
             bt.logging.error(f"UID={uid} submission contains duplicate molecules")
             score_dict[uid]["entropy"] = None
             score_dict[uid]["block_submitted"] = None
+            valid_molecules_by_uid[uid] = {"smiles": [], "names": []}
             continue
             
         for molecule in data["molecules"]:
@@ -121,6 +122,7 @@ def validate_molecules_and_calculate_entropy(
                     bt.logging.warning(f"UID={uid} submission contains chemically identical molecules: {'; '.join(duplicate_names)}")
                     score_dict[uid]["entropy"] = None
                     score_dict[uid]["block_submitted"] = None
+                    valid_molecules_by_uid[uid] = {"smiles": [], "names": []}
                     continue 
             except Exception as e:
                 bt.logging.warning(f"Error checking for chemically identical molecules for UID={uid}: {e}")
