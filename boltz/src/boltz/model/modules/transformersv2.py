@@ -114,26 +114,14 @@ class DiffusionTransformer(Module):
             else:
                 bias_l = None
 
-            if self.activation_checkpointing and self.training:
-                a = torch.utils.checkpoint.checkpoint(
-                    layer,
-                    a,
-                    s,
-                    bias_l,
-                    mask,
-                    to_keys,
-                    multiplicity,
-                )
-
-            else:
-                a = layer(
-                    a,  # Float['bm n d'],
-                    s,  # Float['bm n ds'],
-                    bias_l,  # Float['b n n dp']
-                    mask,  # Bool['b n'] | None = None
-                    to_keys,
-                    multiplicity,
-                )
+            a = layer(
+                a,  # Float['bm n d'],
+                s,  # Float['bm n ds'],
+                bias_l,  # Float['b n n dp']
+                mask,  # Bool['b n'] | None = None
+                to_keys,
+                multiplicity,
+            )
         return a
 
 

@@ -122,19 +122,11 @@ class DiffusionModule(Module):
         diffusion_conditioning,
         multiplicity=1,
     ):
-        if self.activation_checkpointing and self.training:
-            s, normed_fourier = torch.utils.checkpoint.checkpoint(
-                self.single_conditioner,
-                times,
-                s_trunk.repeat_interleave(multiplicity, 0),
-                s_inputs.repeat_interleave(multiplicity, 0),
-            )
-        else:
-            s, normed_fourier = self.single_conditioner(
-                times,
-                s_trunk.repeat_interleave(multiplicity, 0),
-                s_inputs.repeat_interleave(multiplicity, 0),
-            )
+        s, normed_fourier = self.single_conditioner(
+            times,
+            s_trunk.repeat_interleave(multiplicity, 0),
+            s_inputs.repeat_interleave(multiplicity, 0),
+        )
 
         # Sequence-local Atom Attention and aggregation to coarse-grained tokens
         a, q_skip, c_skip, to_keys = self.atom_attention_encoder(

@@ -132,7 +132,7 @@ class ConfidenceModule(nn.Module):
                         pred_distogram_logits,
                         multiplicity=1,
                         run_sequentially=False,
-                        use_kernels=use_kernels,
+                        #use_kernels=use_kernels,
                     )
                 )
 
@@ -203,7 +203,7 @@ class ConfidenceModule(nn.Module):
         pair_mask = mask[:, :, None] * mask[:, None, :]
 
         s_t, z_t = self.pairformer_stack(
-            s, z, mask=mask, pair_mask=pair_mask, use_kernels=use_kernels
+            s, z, mask=mask, pair_mask=pair_mask, #use_kernels=use_kernels
         )
 
         # AF3 has residual connections, we remove them

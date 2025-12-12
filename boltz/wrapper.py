@@ -5,10 +5,6 @@ import traceback
 import json
 import numpy as np
 import random
-import gc
-import shutil
-import hashlib
-import math
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -16,12 +12,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import torch
-torch.use_deterministic_algorithms(True, warn_only=False)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
-torch.set_float32_matmul_precision("highest")
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PARENT_DIR = os.path.dirname(os.path.join(BASE_DIR, ".."))
@@ -31,26 +21,8 @@ import bittensor as bt
 
 from src.boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
-from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles
+from utils.molecules import compute_maccs_entropy
 
-def _snapshot_rng():
-    return {
-        "py":  random.getstate(),
-        "np":  np.random.get_state(),
-        "tc":  torch.random.get_rng_state(),
-        "tcu": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-    }
-
-def _restore_rng(snap):
-    random.setstate(snap["py"])
-    np.random.set_state(snap["np"])
-    torch.random.set_rng_state(snap["tc"])
-    if snap["tcu"] is not None:
-        torch.cuda.set_rng_state_all(snap["tcu"])
-
-def _seed_for_record(rec_id, base_seed):
-    h = hashlib.sha256(str(rec_id).encode()).digest()
-    return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
 
 class BoltzWrapper:
     def __init__(self):
@@ -74,12 +46,6 @@ class BoltzWrapper:
         random.seed(self.base_seed)
         np.random.seed(self.base_seed)
         torch.manual_seed(self.base_seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(self.base_seed)
-
-        self._rng0 = _snapshot_rng()
-        bt.logging.debug("BoltzWrapper initialized with deterministic baseline")
-
 
     def preprocess_data_for_boltz(self, valid_molecules_by_uid: dict, score_dict: dict, final_block_hash: str) -> None:
         # Get protein sequence
@@ -115,14 +81,9 @@ class BoltzWrapper:
                 score_dict[uid]["entropy_boltz"] = None
 
             for smiles in boltz_candidates_smiles:
-                ok, reason = is_boltz_safe_smiles(smiles)
-                if not ok:
-                    bt.logging.warning(f"Skipping Boltz candidate {smiles} because it is not parseable: {reason}")
-                    continue
                 if smiles not in self.unique_molecules:
                     self.unique_molecules[smiles] = []
                 rec_id = smiles + self.protein_sequence #+ final_block_hash
-                mol_idx = _seed_for_record(rec_id, self.base_seed)
 
                 self.unique_molecules[smiles].append((uid, mol_idx))
         bt.logging.info(f"Unique Boltz candidates: {self.unique_molecules}")
@@ -176,7 +137,6 @@ properties:
         # Run Boltz2 for unique molecules
         bt.logging.info("Running Boltz2")
         try:
-            _restore_rng(self._rng0)
             predict(
                 data = self.input_dir,
                 out_dir = self.output_dir,
@@ -188,8 +148,6 @@ properties:
                 output_format = self.config['output_format'],
                 seed = 68,
                 affinity_mw_correction = self.config['affinity_mw_correction'],
-                no_kernels = self.config['no_kernels'],
-                batch_predictions = self.config['batch_predictions'],
                 override = self.config['override'],
             )
             bt.logging.info(f"Boltz2 predictions complete")
@@ -248,27 +206,5 @@ properties:
             if uid in final_boltz_scores:
                 data['boltz_score'] = np.mean(final_boltz_scores[uid])
             else:
-                data['boltz_score'] = -math.inf
-    
-    def clear_gpu_memory(self):
-        """Clear GPU memory and run garbage collection."""
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            # Reset CUDA context to allow other processes to initialize
-            torch.cuda.reset_peak_memory_stats()
-        gc.collect()
-    
-    def cleanup_model(self):
-        """Clean up model and free GPU memory."""
-        
-        # Clear any model-specific attributes
-        if hasattr(self, 'unique_molecules'):
-            del self.unique_molecules
-            self.unique_molecules = None
-        if hasattr(self, 'protein_sequence'):
-            del self.protein_sequence
-            self.protein_sequence = None
-            
-        self.clear_gpu_memory()
+                data['boltz_score'] = None
 
