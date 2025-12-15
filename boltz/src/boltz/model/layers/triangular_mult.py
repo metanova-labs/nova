@@ -70,7 +70,7 @@ class TriangleMultiplicationOutgoing(nn.Module):
         init.final_init_(self.p_out.weight)
         init.gating_init_(self.g_out.weight)
 
-    def forward(self, x: Tensor, mask: Tensor, use_kernels: bool = False) -> Tensor:
+    def forward(self, x: Tensor, mask: Tensor) -> Tensor:
         """Perform a forward pass.
 
         Parameters
@@ -79,8 +79,6 @@ class TriangleMultiplicationOutgoing(nn.Module):
             The input data of shape (B, N, N, D)
         mask: torch.Tensor
             The input mask of shape (B, N, N)
-        use_kernels: bool
-            Whether to use the kernel
 
         Returns
         -------
@@ -88,40 +86,39 @@ class TriangleMultiplicationOutgoing(nn.Module):
             The output data of shape (B, N, N, D)
 
         """
-        if use_kernels:
-            return kernel_triangular_mult(
-                x,
-                direction="outgoing",
-                mask=mask,
-                norm_in_weight=self.norm_in.weight,
-                norm_in_bias=self.norm_in.bias,
-                p_in_weight=self.p_in.weight,
-                g_in_weight=self.g_in.weight,
-                norm_out_weight=self.norm_out.weight,
-                norm_out_bias=self.norm_out.bias,
-                p_out_weight=self.p_out.weight,
-                g_out_weight=self.g_out.weight,
-                eps=1e-5,
-            )
+        return kernel_triangular_mult(
+            x,
+            direction="outgoing",
+            mask=mask,
+            norm_in_weight=self.norm_in.weight,
+            norm_in_bias=self.norm_in.bias,
+            p_in_weight=self.p_in.weight,
+            g_in_weight=self.g_in.weight,
+            norm_out_weight=self.norm_out.weight,
+            norm_out_bias=self.norm_out.bias,
+            p_out_weight=self.p_out.weight,
+            g_out_weight=self.g_out.weight,
+            eps=1e-5,
+        )
 
-        # Input gating: D -> D
-        x = self.norm_in(x)
-        x_in = x
-        x = self.p_in(x) * self.g_in(x).sigmoid()
+        # # Input gating: D -> D
+        # x = self.norm_in(x)
+        # x_in = x
+        # x = self.p_in(x) * self.g_in(x).sigmoid()
 
-        # Apply mask
-        x = x * mask.unsqueeze(-1)
+        # # Apply mask
+        # x = x * mask.unsqueeze(-1)
 
-        # Split input and cast to float
-        a, b = torch.chunk(x.float(), 2, dim=-1)
+        # # Split input and cast to float
+        # a, b = torch.chunk(x.float(), 2, dim=-1)
 
-        # Triangular projection
-        x = torch.einsum("bikd,bjkd->bijd", a, b)
+        # # Triangular projection
+        # x = torch.einsum("bikd,bjkd->bijd", a, b)
 
-        # Output gating
-        x = self.p_out(self.norm_out(x)) * self.g_out(x_in).sigmoid()
+        # # Output gating
+        # x = self.p_out(self.norm_out(x)) * self.g_out(x_in).sigmoid()
 
-        return x
+        # return x
 
 
 class TriangleMultiplicationIncoming(nn.Module):
@@ -158,7 +155,7 @@ class TriangleMultiplicationIncoming(nn.Module):
         init.final_init_(self.p_out.weight)
         init.gating_init_(self.g_out.weight)
 
-    def forward(self, x: Tensor, mask: Tensor, use_kernels: bool = False) -> Tensor:
+    def forward(self, x: Tensor, mask: Tensor) -> Tensor:
         """Perform a forward pass.
 
         Parameters
@@ -167,8 +164,6 @@ class TriangleMultiplicationIncoming(nn.Module):
             The input data of shape (B, N, N, D)
         mask: torch.Tensor
             The input mask of shape (B, N, N)
-        use_kernels: bool
-            Whether to use the kernel
 
         Returns
         -------
@@ -176,37 +171,36 @@ class TriangleMultiplicationIncoming(nn.Module):
             The output data of shape (B, N, N, D)
 
         """
-        if use_kernels:
-            return kernel_triangular_mult(
-                x,
-                direction="incoming",
-                mask=mask,
-                norm_in_weight=self.norm_in.weight,
-                norm_in_bias=self.norm_in.bias,
-                p_in_weight=self.p_in.weight,
-                g_in_weight=self.g_in.weight,
-                norm_out_weight=self.norm_out.weight,
-                norm_out_bias=self.norm_out.bias,
-                p_out_weight=self.p_out.weight,
-                g_out_weight=self.g_out.weight,
-                eps=1e-5,
-            )
+        return kernel_triangular_mult(
+            x,
+            direction="incoming",
+            mask=mask,
+            norm_in_weight=self.norm_in.weight,
+            norm_in_bias=self.norm_in.bias,
+            p_in_weight=self.p_in.weight,
+            g_in_weight=self.g_in.weight,
+            norm_out_weight=self.norm_out.weight,
+            norm_out_bias=self.norm_out.bias,
+            p_out_weight=self.p_out.weight,
+            g_out_weight=self.g_out.weight,
+            eps=1e-5,
+        )
 
-        # Input gating: D -> D
-        x = self.norm_in(x)
-        x_in = x
-        x = self.p_in(x) * self.g_in(x).sigmoid()
+        # # Input gating: D -> D
+        # x = self.norm_in(x)
+        # x_in = x
+        # x = self.p_in(x) * self.g_in(x).sigmoid()
 
-        # Apply mask
-        x = x * mask.unsqueeze(-1)
+        # # Apply mask
+        # x = x * mask.unsqueeze(-1)
 
-        # Split input and cast to float
-        a, b = torch.chunk(x.float(), 2, dim=-1)
+        # # Split input and cast to float
+        # a, b = torch.chunk(x.float(), 2, dim=-1)
 
-        # Triangular projection
-        x = torch.einsum("bkid,bkjd->bijd", a, b)
+        # # Triangular projection
+        # x = torch.einsum("bkid,bkjd->bijd", a, b)
 
-        # Output gating
-        x = self.p_out(self.norm_out(x)) * self.g_out(x_in).sigmoid()
+        # # Output gating
+        # x = self.p_out(self.norm_out(x)) * self.g_out(x_in).sigmoid()
 
-        return x
+        # return x

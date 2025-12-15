@@ -26,6 +26,16 @@ from boltz.model.layers.triangular_attention.utils import (
     permute_final_dims,
 )
 
+try:
+    from torch.nn.attention import flex_attention as torch_flex_attention
+    torch_flex_attention.flex_attention = torch.compile(torch_flex_attention.flex_attention)
+except ImportError:  # PyTorch<2.3 or CPU-only builds without flex attention
+    torch_flex_attention = None
+
+@torch.compiler.disable
+def kernel_triangular_attn(q, k, v, tri_bias, mask, scale):
+    from cuequivariance_torch.primitives.triangle import triangle_attention
+    return triangle_attention(q, k, v, tri_bias, mask=mask, scale=scale)
 
 class Linear(nn.Linear):
     """
@@ -196,11 +206,6 @@ def _attention(
     return a
 
 
-@torch.compiler.disable
-def kernel_triangular_attn(q, k, v, tri_bias, mask, scale):
-    from cuequivariance_torch.primitives.triangle import triangle_attention
-    return triangle_attention(q, k, v, tri_bias, mask=mask, scale=scale)
-
 
 class Attention(nn.Module):
     """
@@ -286,8 +291,6 @@ class Attention(nn.Module):
         k = k.transpose(-2, -3)
         v = v.transpose(-2, -3)
 
-        if apply_scale:
-            q /= math.sqrt(self.c_hidden)
 
         return q, k, v
 
@@ -307,14 +310,64 @@ class Attention(nn.Module):
 
         return o
 
+    def _flex_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        tri_bias: torch.Tensor,
+        mask_bias: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        if torch_flex_attention is None or not q.is_cuda:
+            return None
+
+        # Flex attention expects tensors shaped as [B, H, Q, C_hidden]
+        q_len = q.shape[-2]
+        k_len = k.shape[-2]
+        head_dim = q.shape[-1]
+
+        q_flex = q.contiguous().reshape(-1, self.no_heads, q_len, head_dim)
+        k_flex = k.contiguous().reshape(-1, self.no_heads, k_len, head_dim)
+        v_flex = v.contiguous().reshape(-1, self.no_heads, k_len, head_dim)
+
+        # Broadcast biases to the full score tensor so we can reuse them in score_mod
+        score_bias = torch.zeros(
+            q.shape[:-1] + (k_len,),
+            dtype=q.dtype,
+            device=q.device,
+        )
+        score_bias = score_bias + mask_bias.to(dtype=q.dtype)
+        score_bias = score_bias + tri_bias.to(dtype=q.dtype)
+
+        score_bias = score_bias.contiguous().reshape(
+            -1, self.no_heads, q_len, k_len
+        )
+
+
+        scale = 1.0 / math.sqrt(self.c_hidden)
+
+        def score_mod(score: torch.Tensor, b: int, h: int, q_idx: int, k_idx: int):
+            return score + score_bias[b, h, q_idx, k_idx]
+
+
+        o = torch_flex_attention.flex_attention(
+            q_flex,
+            k_flex,
+            v_flex,
+            score_mod=score_mod,
+            scale=scale,
+        )
+
+        o = o.reshape(q.shape[:-3] + (self.no_heads, q_len, head_dim))
+
+        return o
+
     def forward(
         self,
         q_x: torch.Tensor,
         kv_x: torch.Tensor,
         tri_bias: torch.Tensor,
-        mask_bias: torch.Tensor,
         mask: torch.Tensor,
-        use_kernels: bool = False,
     ) -> torch.Tensor:
         """Compute attention.
 
@@ -330,8 +383,6 @@ class Attention(nn.Module):
             [*, H, Q, K] mask bias
         mask : torch.Tensor
             [*, Q, K] mask
-        use_kernels : bool, default=False
-            Whether to use optimized CUDA kernels
 
         Returns
         -------
@@ -342,24 +393,23 @@ class Attention(nn.Module):
         q, k, v = self._prep_qkv(
             q_x,
             kv_x,
-            apply_scale=not use_kernels,
         )
 
-        if use_kernels:
-            scale = 1.0 / math.sqrt(self.c_hidden)
-            o = kernel_triangular_attn(
-                q,
-                k,
-                v,
-                tri_bias=tri_bias,
-                mask=mask.bool(),
-                scale=scale,
-            )
-            o = o.transpose(-2, -3)
-        else:
-            biases = [mask_bias, tri_bias]
-            o = _attention(q, k, v, biases)
-            o = o.transpose(-2, -3)
+        # q /= math.sqrt(self.c_hidden)
+        # biases = [mask_bias, tri_bias]
+        # o = _attention(q, k, v, biases)
+        # o = self._flex_attention(q, k, v, tri_bias, mask_bias)
+        scale = 1.0 / math.sqrt(self.c_hidden)
+        o = kernel_triangular_attn(
+            q,
+            k,
+            v,
+            tri_bias=tri_bias,
+            mask=mask.bool(),
+            scale=scale,
+        )
+
+        o = o.transpose(-2, -3)
 
         o = self._wrap_up(o, q_x)
 

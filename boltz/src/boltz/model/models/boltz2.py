@@ -462,7 +462,7 @@ class Boltz2(LightningModule):
                                 template_module = self.template_module
 
                             z = z + template_module(
-                                z, feats, pair_mask, use_kernels=self.use_kernels
+                                z, feats, pair_mask, #use_kernels=self.use_kernels
                             )
 
                         if self.is_msa_compiled and not self.training:
@@ -471,7 +471,7 @@ class Boltz2(LightningModule):
                             msa_module = self.msa_module
 
                         z = z + msa_module(
-                            z, s_inputs, feats, use_kernels=self.use_kernels
+                            z, s_inputs, feats, #use_kernels=self.use_kernels
                         )
 
                         # Revert to uncompiled version for validation
@@ -485,7 +485,7 @@ class Boltz2(LightningModule):
                             z,
                             mask=mask,
                             pair_mask=pair_mask,
-                            use_kernels=self.use_kernels,
+                            #use_kernels=self.use_kernels,
                         )
 
             pdistogram = self.distogram_module(z)
@@ -601,7 +601,7 @@ class Boltz2(LightningModule):
                     ),
                     multiplicity=diffusion_samples,
                     run_sequentially=run_confidence_sequentially,
-                    use_kernels=self.use_kernels,
+                    #use_kernels=self.use_kernels,
                 )
             )
 
@@ -633,7 +633,7 @@ class Boltz2(LightningModule):
                         x_pred=coords_affinity,
                         feats=feats,
                         multiplicity=1,
-                        use_kernels=self.use_kernels,
+                        #use_kernels=self.use_kernels,
                     )
 
                     dict_out_affinity1["affinity_probability_binary"] = (
@@ -647,7 +647,7 @@ class Boltz2(LightningModule):
                         x_pred=coords_affinity,
                         feats=feats,
                         multiplicity=1,
-                        use_kernels=self.use_kernels,
+                        #use_kernels=self.use_kernels,
                     )
                     dict_out_affinity2["affinity_probability_binary"] = (
                         torch.nn.functional.sigmoid(
@@ -706,7 +706,7 @@ class Boltz2(LightningModule):
                         x_pred=coords_affinity,
                         feats=feats,
                         multiplicity=1,
-                        use_kernels=self.use_kernels,
+                        #use_kernels=self.use_kernels,
                     )
                     dict_out.update(
                         {

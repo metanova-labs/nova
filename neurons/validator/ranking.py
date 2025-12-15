@@ -111,7 +111,7 @@ def calculate_final_scores(
             and entropy_boltz is not None
             and math.isfinite(boltz_score)
             and math.isfinite(entropy_boltz)
-            and boltz_score > threshold_boltz
+            and boltz_score < threshold_boltz
             and entropy_boltz > 0
             and config['num_molecules_boltz'] > 1
         ):
@@ -153,7 +153,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
         Optional[int]: Winning UID or None if no valid scores found
     """
     best_score_psichic = -math.inf
-    best_score_boltz = -math.inf
+    best_score_boltz = math.inf
     best_uids_psichic = []
     best_uids_boltz = []
 
@@ -200,7 +200,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
         elif psichic_score == best_score_psichic:
             best_uids_psichic.append(uid)
 
-        if boltz_score > best_score_boltz:
+        if boltz_score < best_score_boltz:
             best_score_boltz = boltz_score
             best_uids_boltz = [uid]
         elif boltz_score == best_score_boltz:
@@ -213,7 +213,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
     # Treat all -inf as no valid winners for each model
     if best_score_psichic == -math.inf:
         best_uids_psichic = []
-    if best_score_boltz == -math.inf:
+    if best_score_boltz == math.inf:
         best_uids_boltz = []
     
     # Select winner from each model

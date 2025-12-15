@@ -749,34 +749,6 @@ def process_inputs(
     manifest.dump(out_dir / "processed" / "manifest.json")
 
 
-def _set_kernel_determinism():
-    torch.use_deterministic_algorithms(True, warn_only=False)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
-    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
-
-def _snapshot_rng():
-    return {
-        "py":  random.getstate(),
-        "np":  np.random.get_state(),
-        "tc":  torch.random.get_rng_state(),
-        "tcu": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-    }
-
-def _restore_rng(snap):
-    random.setstate(snap["py"])
-    np.random.set_state(snap["np"])
-    torch.random.set_rng_state(snap["tc"])
-    if snap["tcu"] is not None:
-        torch.cuda.set_rng_state_all(snap["tcu"])
-
-def _make_gen(seed: int, device: str = "cuda"):
-    g = torch.Generator(device=device if torch.cuda.is_available() else "cpu")
-    g.manual_seed(seed)
-    return g
-
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -815,7 +787,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
-    batch_predictions: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -830,8 +801,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
 
     # Set no grad
     torch.set_grad_enabled(False)
-
-    _set_kernel_determinism()
 
     # Ignore matmul precision warning
     torch.set_float32_matmul_precision('highest')
@@ -961,12 +930,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             else:
                 devices = max(1, min(len(filtered_manifest.records), devices))
 
-    # Per-input inference enforces single-device to avoid DDP/data sharding issues
-    if not batch_predictions and ((isinstance(devices, int) and devices != 1) or (isinstance(devices, list) and len(devices) != 1)):
-        click.echo("Per-input inference enabled: forcing devices=1.")
-        devices = 1
-        strategy = "auto"
-
     # Set up model parameters
     diffusion_params = Boltz2DiffusionParams()
     step_scale = 1.5 if step_scale is None else step_scale
@@ -1028,7 +991,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             checkpoint,
             strict=True,
             predict_args=predict_args,
-            map_location="cuda:0" if torch.cuda.is_available() else "cpu",
+            map_location="cuda",
             diffusion_process_args=asdict(diffusion_params),
             ema=False,
             use_kernels=not no_kernels,
@@ -1038,63 +1001,23 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
-        if not batch_predictions:
-            # Predict one input at a time, seeding by record id - record.id is already hashed on wrapper
-            for record in filtered_manifest.records:
-                if isinstance(record.id, str):
-                    h = hashlib.sha256(str(record.id).encode()).digest()
-                    base = int(seed) if (seed is not None) else 0
-                    rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
-                elif isinstance(record.id, int) and record.id >= 0:
-                    rec_seed = record.id
-                else:
-                    click.echo(f"Record id must be a string or int, got {type(record.id)}. Setting seed to {seed}")
-                    rec_seed = seed
-
-                if rec_seed is not None:
-                    seed_everything(rec_seed, workers=True)
-
-                single_manifest = Manifest([record])
-                data_module = Boltz2InferenceDataModule(
-                    manifest=single_manifest,
-                    target_dir=processed.targets_dir,
-                    msa_dir=processed.msa_dir,
-                    mol_dir=mol_dir,
-                    num_workers=num_workers,
-                    constraints_dir=processed.constraints_dir,
-                    template_dir=processed.template_dir,
-                    extra_mols_dir=processed.extra_mols_dir,
-                    override_method=method,
-                )
-
-                # run prediction
-                with torch.no_grad():
-                    with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
-                        trainer.predict(
-                            model_module,
-                            datamodule=data_module,
-                            return_predictions=False,
-                        )
-        else:
-            # Batched prediction (original behavior, with fixed seed)
-            data_module = Boltz2InferenceDataModule(
-                manifest=processed.manifest,
-                target_dir=processed.targets_dir,
-                msa_dir=processed.msa_dir,
-                mol_dir=mol_dir,
-                num_workers=num_workers,
-                constraints_dir=processed.constraints_dir,
-                template_dir=processed.template_dir,
-                extra_mols_dir=processed.extra_mols_dir,
-                override_method=method,
+        data_module = Boltz2InferenceDataModule(
+            manifest=processed.manifest,
+            target_dir=processed.targets_dir,
+            msa_dir=processed.msa_dir,
+            mol_dir=mol_dir,
+            num_workers=num_workers,
+            constraints_dir=processed.constraints_dir,
+            template_dir=processed.template_dir,
+            extra_mols_dir=processed.extra_mols_dir,
+            override_method=method,
+        )
+        with torch.no_grad():
+            trainer.predict(
+                model_module,
+                datamodule=data_module,
+                return_predictions=False,
             )
-            with torch.no_grad():
-                with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
-                    trainer.predict(
-                        model_module,
-                        datamodule=data_module,
-                        return_predictions=False,
-                    )
 
     # Check if affinity predictions are needed
     if any(r.affinity for r in manifest.records):
@@ -1144,7 +1067,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             affinity_checkpoint,
             strict=True,
             predict_args=predict_affinity_args,
-            map_location="cuda:0" if torch.cuda.is_available() else "cpu",
+            map_location="cuda",
             diffusion_process_args=asdict(diffusion_params),
             ema=False,
             pairformer_args=asdict(pairformer_args),
@@ -1157,59 +1080,22 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Swap writer callback
         trainer.callbacks[0] = pred_writer
 
-        if not batch_predictions:
-            # Predict one input at a time, seeding by record id - record.id is already hashed on wrapper
-            for record in filtered_manifest.records:
-                if isinstance(record.id, str):
-                    h = hashlib.sha256(str(record.id).encode()).digest()
-                    base = int(seed) if (seed is not None) else 0
-                    rec_seed = (int.from_bytes(h[:8], "little") ^ base) % (2**31 - 1)
-                elif isinstance(record.id, int) and record.id >= 0:
-                    rec_seed = record.id
-                else:
-                    rec_seed = seed
-
-                if rec_seed is not None:
-                    seed_everything(rec_seed, workers=True)
-
-                single_manifest = Manifest([record])
-                data_module = Boltz2InferenceDataModule(
-                    manifest=single_manifest,
-                    target_dir=out_dir / "predictions",
-                    msa_dir=processed.msa_dir,
-                    mol_dir=mol_dir,
-                    num_workers=num_workers,
-                    constraints_dir=processed.constraints_dir,
-                    template_dir=processed.template_dir,
-                    extra_mols_dir=processed.extra_mols_dir,
-                    override_method="other",
-                    affinity=True,
-                )
-                with torch.no_grad():
-                    with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
-                        trainer.predict(
-                            model_module,
-                            datamodule=data_module,
-                            return_predictions=False,
-                        )
-        else:
-            data_module = Boltz2InferenceDataModule(
-                manifest=manifest_filtered,
-                target_dir=out_dir / "predictions",
-                msa_dir=processed.msa_dir,
-                mol_dir=mol_dir,
-                num_workers=num_workers,
-                constraints_dir=processed.constraints_dir,
-                template_dir=processed.template_dir,
-                extra_mols_dir=processed.extra_mols_dir,
-                override_method="other",
-                affinity=True,
+        data_module = Boltz2InferenceDataModule(
+            manifest=manifest_filtered,
+            target_dir=out_dir / "predictions",
+            msa_dir=processed.msa_dir,
+            mol_dir=mol_dir,
+            num_workers=num_workers,
+            constraints_dir=processed.constraints_dir,
+            template_dir=processed.template_dir,
+            extra_mols_dir=processed.extra_mols_dir,
+            override_method="other",
+            affinity=True,
+        )
+        with torch.no_grad():
+            trainer.predict(
+                model_module,
+                datamodule=data_module,
+                return_predictions=False,
             )
-            with torch.no_grad():
-                with torch.random.fork_rng(devices=[torch.device("cuda")], enabled=True):
-                    trainer.predict(
-                        model_module,
-                        datamodule=data_module,
-                        return_predictions=False,
-                    )
 

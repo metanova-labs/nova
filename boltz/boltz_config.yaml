@@ -11,5 +11,5 @@ override: true
 no_kernels: true
 remove_files: true # Remove files after processing
 
-batch_predictions: true 
+batch_predictions: false
 
