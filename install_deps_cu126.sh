@@ -21,7 +21,7 @@ cd ..
 
 
 # Create and activate virtual environment
-uv venv && source .venv/bin/activate \
+uv venv --python python3.12 && source .venv/bin/activate \
         && uv pip install -r requirements/requirements.txt \
         && uv pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126 \
         && uv pip install torch-geometric==2.6.1 \
