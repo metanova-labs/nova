@@ -5,6 +5,7 @@ import traceback
 import json
 import numpy as np
 import random
+import hashlib
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -23,6 +24,9 @@ from src.boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
 from utils.molecules import compute_maccs_entropy
 
+def _seed_for_record(rec_id, base_seed):
+    h = hashlib.sha256(str(rec_id).encode()).digest()
+    return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
 
 class BoltzWrapper:
     def __init__(self):
@@ -84,6 +88,7 @@ class BoltzWrapper:
                 if smiles not in self.unique_molecules:
                     self.unique_molecules[smiles] = []
                 rec_id = smiles + self.protein_sequence #+ final_block_hash
+                mol_idx = _seed_for_record(rec_id, self.base_seed)
 
                 self.unique_molecules[smiles].append((uid, mol_idx))
         bt.logging.info(f"Unique Boltz candidates: {self.unique_molecules}")
