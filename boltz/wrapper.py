@@ -6,6 +6,7 @@ import json
 import numpy as np
 import random
 import hashlib
+import math
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -215,5 +216,5 @@ properties:
             if uid in final_boltz_scores:
                 data['boltz_score'] = np.mean(final_boltz_scores[uid])
             else:
-                data['boltz_score'] = None
+                data['boltz_score'] = math.inf
 
