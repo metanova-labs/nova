@@ -22,7 +22,7 @@ import bittensor as bt
 
 from src.boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
-from utils.molecules import compute_maccs_entropy
+from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles
 
 def _seed_for_record(rec_id, base_seed):
     h = hashlib.sha256(str(rec_id).encode()).digest()
@@ -85,6 +85,10 @@ class BoltzWrapper:
                 score_dict[uid]["entropy_boltz"] = None
 
             for smiles in boltz_candidates_smiles:
+                ok, reason = is_boltz_safe_smiles(smiles)
+                if not ok:
+                    bt.logging.warning(f"Skipping Boltz candidate {smiles} because it is not parseable: {reason}")
+                    continue
                 if smiles not in self.unique_molecules:
                     self.unique_molecules[smiles] = []
                 rec_id = smiles + self.protein_sequence #+ final_block_hash
