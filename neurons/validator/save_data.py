@@ -8,7 +8,11 @@ from utils import calculate_dynamic_entropy
 
 
 def _safe_num(x: float) -> float:
-    return -999.99 if x == -math.inf else x
+    if x == -math.inf:
+        return -999.99
+    if x == math.inf:
+        return 999.99
+    return x
 
 
 def _get_dynamic_entropy_weight_for_epoch(config, current_epoch: int) -> float:
