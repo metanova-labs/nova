@@ -7,7 +7,7 @@ sampling_steps_affinity: 100
 diffusion_samples_affinity: 3
 affinity_mw_correction: true
 output_format: "pdb"
-override: true
+override: false
 no_kernels: true
 remove_files: true # Remove files after processing
 
