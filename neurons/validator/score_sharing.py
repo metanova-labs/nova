@@ -4,11 +4,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import bittensor as bt
 import requests
 
-WAIT_SECONDS = 300   # Delay between POST and GET
+WAIT_SECONDS = 300
+FINALIZATION_BUFFER_BLOCKS = 30
 
 
 async def _post_json(url: str, json_body: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
-    """Async wrapper around requests.post returning (status_code, json)."""
     def _do_post():
         resp = requests.post(url, json=json_body, headers=headers, timeout=10)
         try:
@@ -20,7 +20,6 @@ async def _post_json(url: str, json_body: Dict[str, Any], headers: Dict[str, str
 
 
 async def _get_json(url: str, headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
-    """Async wrapper around requests.get returning (status_code, json)."""
     def _do_get():
         resp = requests.get(url, headers=headers, timeout=10)
         try:
@@ -32,7 +31,6 @@ async def _get_json(url: str, headers: Dict[str, str]) -> Tuple[int, Dict[str, A
 
 
 async def _get_molecule_avg(url: str, headers: Dict[str, str]) -> Tuple[int, Optional[float]]:
-    """Fetch a single molecule and return its avg, or None."""
     status, data = await _get_json(url, headers)
     if status >= 400:
         return status, None
@@ -52,11 +50,13 @@ async def apply_external_scores(
     api_key: Optional[str] = None,
     epoch: Optional[int] = None,
     boltz_per_molecule: Optional[Dict[int, Dict[str, float]]] = None,
+    subtensor: Optional[Any] = None,
+    epoch_end_block: Optional[int] = None,
+    finalization_buffer_blocks: int = FINALIZATION_BUFFER_BLOCKS,
 ) -> Dict[int, Dict[str, Any]]:
     """
-    Share Boltz per-molecule scores with the score-share API and, after a fixed wait,
+    Share Boltz per-molecule scores with the score-share API and, after a delay,
     update each UID's boltz_score with the validator-averaged values.
-    Falls back to local scores on any error or missing data.
     """
     if not api_url:
         return score_dict
@@ -123,12 +123,26 @@ async def apply_external_scores(
         if total_posts == 0:
             return score_dict
 
-        bt.logging.info(
-            f"Submitted {total_posts} validation(s) to score-share API, "
-            f"waiting {WAIT_SECONDS}s before retrieving averages"
-        )
-
-        await asyncio.sleep(WAIT_SECONDS)
+        if subtensor is not None and epoch_end_block is not None:
+            target_block = max(epoch_end_block - int(finalization_buffer_blocks), 0)
+            bt.logging.info(
+                f"Submitted {total_posts} validation(s) to score-share API; "
+                f"waiting until block {target_block}, {finalization_buffer_blocks} blocks before epoch end, "
+                f"before retrieving averages"
+            )
+            try:
+                await subtensor.wait_for_block(target_block)
+            except Exception as e:
+                bt.logging.warning(
+                    f"Error while waiting for target block before score-share GET; using local scores. Error: {e}"
+                )
+                return score_dict
+        else:
+            bt.logging.info(
+                f"Submitted {total_posts} validation(s) to score-share API, "
+                f"waiting {WAIT_SECONDS}s before retrieving averages"
+            )
+            await asyncio.sleep(WAIT_SECONDS)
 
         unique_names: set[str] = {name for name, _ in post_items}
 
@@ -172,6 +186,4 @@ async def apply_external_scores(
     except Exception as e:
         bt.logging.error(f"Score-share step failed; using local scores. Error: {e}")
         return score_dict
-
-
 

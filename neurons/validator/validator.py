@@ -143,12 +143,10 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         
         boltz.score_molecules_target(valid_molecules_by_uid, score_dict, config, final_block_hash)
 
-        # Calculate final scores
         score_dict = calculate_final_scores(
             score_dict, valid_molecules_by_uid, molecule_name_counts, config, current_epoch
         )
 
-        # Optionally upload per-molecule scores to an external API and replace with returned averages
         external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
         if external_api_url:
             external_api_key = os.environ.get('VALIDATOR_API_KEY')
@@ -159,6 +157,8 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 api_key=external_api_key,
                 epoch=current_epoch,
                 boltz_per_molecule=getattr(boltz, "per_molecule_metric", None) if boltz is not None else None,
+                subtensor=subtensor,
+                epoch_end_block=current_block + config.epoch_length,
             )
 
         # Determine winner
