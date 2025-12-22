@@ -4,6 +4,7 @@ PSICHIC-based molecular scoring functionality for the validator
 
 import math
 import os
+import subprocess
 import bittensor as bt
 
 from utils import get_sequence_from_protein_code
@@ -57,11 +58,24 @@ def score_all_proteins_psichic(
         except Exception as e:
             try:
                 if BASE_DIR:
-                    os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt")
+                    model_path = os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')
+                    model_url = "https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                    bt.logging.info(f"Downloading model from {model_url}")
+                    result = subprocess.run(
+                        ["wget", "-O", model_path, model_url],
+                        capture_output=True, text=True, timeout=300
+                    )
+                    if result.returncode != 0:
+                        raise RuntimeError(f"wget failed: {result.stderr}")
+                    bt.logging.info("Model downloaded successfully")
                 psichic.run_challenge_start(protein_sequence)
                 bt.logging.info('Model initialized successfully.')
             except Exception as e:
-                bt.logging.error(f'Error initializing model: {e}')
+                affected_uids = list(score_dict.keys())
+                bt.logging.error(
+                    f'Error initializing model for protein {protein}: {e}. '
+                    f'Setting -inf scores for {len(affected_uids)} UIDs: {affected_uids}'
+                )
                 # Set all scores to -inf for this protein
                 for uid in score_dict:
                     num_molecules = len(valid_molecules_by_uid.get(uid, {}).get('smiles', []))

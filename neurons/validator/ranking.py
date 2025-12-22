@@ -62,7 +62,7 @@ def calculate_final_scores(
         for mol_idx in range(num_molecules):
             # Calculate average target score for this molecule
             target_scores_for_mol = [target_list[mol_idx] for target_list in targets]
-            if any(score == -math.inf for score in target_scores_for_mol):
+            if not target_scores_for_mol or any(score == -math.inf for score in target_scores_for_mol):
                 combined_molecule_scores.append(-math.inf)
                 molecule_scores_after_repetition.append(-math.inf)
                 continue
@@ -70,7 +70,7 @@ def calculate_final_scores(
 
             # Calculate average antitarget score for this molecule
             antitarget_scores_for_mol = [antitarget_list[mol_idx] for antitarget_list in antitargets]
-            if any(score == -math.inf for score in antitarget_scores_for_mol):
+            if not antitarget_scores_for_mol or any(score == -math.inf for score in antitarget_scores_for_mol):
                 combined_molecule_scores.append(-math.inf)
                 molecule_scores_after_repetition.append(-math.inf)
                 continue
@@ -141,16 +141,17 @@ def calculate_final_scores(
     return score_dict
 
 
-def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Optional[int]:
+def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], epoch_length: int = 361) -> tuple[Optional[int], Optional[int]]:
     """
     Determines the winning UID based on final score.
     In case of ties, earliest submission time is used as the tiebreaker.
-    
+
     Args:
         score_dict: Dictionary containing final scores for each UID
-        
+        epoch_length: Number of blocks per epoch (default 361)
+
     Returns:
-        Optional[int]: Winning UID or None if no valid scores found
+        tuple[Optional[int], Optional[int]]: Tuple of (PSICHIC winner, BOLTZ winner) or None if no valid scores found
     """
     best_score_psichic = -math.inf
     best_score_boltz = math.inf
@@ -168,13 +169,13 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
     def tie_breaker(tied_uids: list[int], best_score: float, model_name: str, print_message: bool = True):
         # Sort by block number first, then push time, then uid to ensure deterministic result
         winner = sorted(tied_uids, key=lambda uid: (
-            score_dict[uid].get('block_submitted', float('inf')), 
-            parse_timestamp(uid), 
+            score_dict[uid].get('block_submitted', float('inf')),
+            parse_timestamp(uid),
             uid
         ))[0]
-        
+
         winner_block = score_dict[winner].get('block_submitted')
-        current_epoch = winner_block // 361 if winner_block else None
+        current_epoch = winner_block // epoch_length if winner_block else None
         push_time = score_dict[winner].get('push_time', '')
         
         tiebreaker_message = f"Epoch {current_epoch} tiebreaker {model_name} winner: UID={winner}, score={best_score}, block={winner_block}"
@@ -220,7 +221,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
     if best_uids_psichic:
         if len(best_uids_psichic) == 1:
             psichic_winner_block = score_dict[best_uids_psichic[0]].get('block_submitted')
-            current_epoch = psichic_winner_block // 361 if psichic_winner_block else None
+            current_epoch = psichic_winner_block // epoch_length if psichic_winner_block else None
             #bt.logging.info(f"Epoch {current_epoch} PSICHIC winner: UID={best_uids_psichic[0]}, winning_score={best_score_psichic}")
             winner_psichic = best_uids_psichic[0]
         else:
@@ -231,7 +232,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]]) -> Opt
     if best_uids_boltz:
         if len(best_uids_boltz) == 1:
             boltz_winner_block = score_dict[best_uids_boltz[0]].get('block_submitted')
-            current_epoch = boltz_winner_block // 361 if boltz_winner_block else None
+            current_epoch = boltz_winner_block // epoch_length if boltz_winner_block else None
             bt.logging.info(f"Epoch {current_epoch} BOLTZ winner: UID={best_uids_boltz[0]}, winning_score={best_score_boltz}")
             winner_boltz = best_uids_boltz[0]
         else:

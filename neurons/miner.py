@@ -9,6 +9,7 @@ import tempfile
 import traceback
 import base64
 import hashlib
+import subprocess
 
 from typing import Any, Dict, List, Optional, Tuple, cast
 from types import SimpleNamespace
@@ -82,11 +83,11 @@ def parse_arguments() -> argparse.Namespace:
 def load_github_path() -> str:
     """
     Constructs the path for GitHub operations from environment variables.
-    
+
     Returns:
         str: The fully qualified GitHub path (owner/repo/branch/path).
     Raises:
-        ValueError: If the final path exceeds 100 characters.
+        ValueError: If the final path exceeds 100 characters or contains invalid characters.
     """
     github_repo_name = os.environ.get('GITHUB_REPO_NAME')  # e.g., "nova"
     github_repo_branch = os.environ.get('GITHUB_REPO_BRANCH')  # e.g., "main"
@@ -96,7 +97,20 @@ def load_github_path() -> str:
     if github_repo_name is None or github_repo_branch is None or github_repo_owner is None:
         raise ValueError("Missing one or more GitHub environment variables (GITHUB_REPO_*)")
 
-    if github_repo_path == "":
+    # Validate owner and repo don't contain slashes or invalid characters
+    if not github_repo_owner or '/' in github_repo_owner:
+        raise ValueError("GITHUB_REPO_OWNER cannot be empty or contain slashes")
+    if not github_repo_name or '/' in github_repo_name:
+        raise ValueError("GITHUB_REPO_NAME cannot be empty or contain slashes")
+    if not github_repo_branch or '/' in github_repo_branch:
+        raise ValueError("GITHUB_REPO_BRANCH cannot be empty or contain slashes")
+
+    # Block path traversal attempts
+    if github_repo_path:
+        if '..' in github_repo_path or github_repo_path.startswith('/'):
+            raise ValueError("GITHUB_REPO_PATH cannot contain '..' or start with '/'")
+
+    if github_repo_path == "" or github_repo_path is None:
         github_path = f"{github_repo_owner}/{github_repo_name}/{github_repo_branch}"
     else:
         github_path = f"{github_repo_owner}/{github_repo_name}/{github_repo_branch}/{github_repo_path}"
@@ -500,10 +514,16 @@ async def run_miner(config: argparse.Namespace) -> None:
                 bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
         except Exception as e:
             try:
-                os.system(
-                    f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} "
-                    f"https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                model_path = os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')
+                model_url = "https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                bt.logging.info(f"Downloading model from {model_url}")
+                result = subprocess.run(
+                    ["wget", "-O", model_path, model_url],
+                    capture_output=True, text=True, timeout=300
                 )
+                if result.returncode != 0:
+                    raise RuntimeError(f"wget failed: {result.stderr}")
+                bt.logging.info("Model downloaded successfully")
                 # Retry initialization after download
                 for target_protein in state['current_challenge_targets']:
                     if target_protein not in state['psichic_models']:
@@ -588,10 +608,16 @@ async def run_miner(config: argparse.Namespace) -> None:
                             bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
                 except Exception as e:
                     try:
-                        os.system(
-                            f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} "
-                            f"https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                        model_path = os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')
+                        model_url = "https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                        bt.logging.info(f"Downloading model from {model_url}")
+                        result = subprocess.run(
+                            ["wget", "-O", model_path, model_url],
+                            capture_output=True, text=True, timeout=300
                         )
+                        if result.returncode != 0:
+                            raise RuntimeError(f"wget failed: {result.stderr}")
+                        bt.logging.info("Model downloaded successfully")
                         # Retry initialization after download
                         for target_protein in state['current_challenge_targets']:
                             if target_protein not in state['psichic_models']:
