@@ -26,6 +26,7 @@ import neurons.validator.scoring as scoring_module
 from neurons.validator.ranking import calculate_final_scores, determine_winner
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
+from neurons.validator.score_sharing import apply_external_scores
 
 # Initialize global components (lazy loading for models)
 psichic = None
@@ -142,10 +143,23 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         
         boltz.score_molecules_target(valid_molecules_by_uid, score_dict, config, final_block_hash)
 
-        # Calculate final scores
         score_dict = calculate_final_scores(
             score_dict, valid_molecules_by_uid, molecule_name_counts, config, current_epoch
         )
+
+        external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
+        if external_api_url:
+            external_api_key = os.environ.get('VALIDATOR_API_KEY')
+            score_dict = await apply_external_scores(
+                score_dict=score_dict,
+                valid_molecules_by_uid=valid_molecules_by_uid,
+                api_url=external_api_url,
+                api_key=external_api_key,
+                epoch=current_epoch,
+                boltz_per_molecule=getattr(boltz, "per_molecule_metric", None) if boltz is not None else None,
+                subtensor=subtensor,
+                epoch_end_block=current_block + config.epoch_length,
+            )
 
         # Determine winner
         winner_psichic, winner_boltz = determine_winner(score_dict)
