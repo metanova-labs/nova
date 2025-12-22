@@ -4,7 +4,7 @@ bittensor==9.9.0
 cryptography==45.0.5
 datasets==3.3.2
 fair-esm==2.0.0
-huggingface-hub==0.29.1
+huggingface-hub==0.36.0
 lifelines==0.30.0
 pandas==2.2.3
 python-dotenv==1.0.1
