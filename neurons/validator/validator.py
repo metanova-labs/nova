@@ -262,7 +262,7 @@ async def main(config):
             metagraph = await subtensor.metagraph(config.netuid)
             current_block = await subtensor.get_current_block()
 
-            if current_block % config.epoch_length != 0:
+            if current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
                 winner_psichic, winner_boltz = await process_epoch(config, current_block, metagraph, subtensor, wallet)
