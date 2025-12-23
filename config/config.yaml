@@ -28,9 +28,12 @@ molecule_validation:
   max_rotatable_bonds: 10
   # Number of molecules to validate with PSICHIC
   num_molecules: 1
+  psichic_mode: "max" # "max" or "min"
   # Number of molecules to validate with Boltz2
   num_molecules_boltz: 1
-  boltz_metric: "affinity_pred_value" # metric to use for scoring: ["affinity_pred_value", "affinity_probability_binary", "confidence_score", ...]
+  boltz_metric: ["affinity_probability_binary", "affinity_pred_value"] # metric to use for scoring: ["affinity_pred_value", "affinity_probability_binary", "confidence_score", ...]
+  combination_strategy: "heavy_atom_normalization" # "heavy_atom_normalization" or "average"
+  boltz_mode: "max" # "max" or "min"
   sample_selection: "first" # "random" or "first"
 
 # Reaction filtering configuration

@@ -161,8 +161,9 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 epoch_end_block=current_block + config.epoch_length,
             )
 
-        # Determine winner
-        winner_psichic, winner_boltz = determine_winner(score_dict)
+        # Determine winner for each model
+        winner_psichic = determine_winner(score_dict, mode=config['psichic_mode'], model_name="psichic")
+        winner_boltz = determine_winner(score_dict, mode=config['boltz_mode'], model_name="boltz")
 
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
@@ -261,7 +262,7 @@ async def main(config):
             metagraph = await subtensor.metagraph(config.netuid)
             current_block = await subtensor.get_current_block()
 
-            if current_block % config.epoch_length == 0:
+            if current_block % config.epoch_length != 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
                 winner_psichic, winner_boltz = await process_epoch(config, current_block, metagraph, subtensor, wallet)

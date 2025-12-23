@@ -24,6 +24,7 @@ def load_config(path: str = "config/config.yaml"):
     min_rotatable_bonds = validation_config["min_rotatable_bonds"]
     max_rotatable_bonds = validation_config["max_rotatable_bonds"]
     num_molecules = validation_config["num_molecules"]
+    psichic_mode = validation_config["psichic_mode"]
     entropy_bonus_threshold = validation_config["entropy_bonus_threshold"]
     entropy_start_weight = validation_config["entropy_start_weight"]
     entropy_start_epoch = validation_config["entropy_start_epoch"]
@@ -32,6 +33,8 @@ def load_config(path: str = "config/config.yaml"):
     molecule_repetition_threshold = validation_config["molecule_repetition_threshold"]
     num_molecules_boltz = validation_config["num_molecules_boltz"]
     boltz_metric = validation_config["boltz_metric"]
+    combination_strategy = validation_config["combination_strategy"]
+    boltz_mode = validation_config["boltz_mode"]
     sample_selection = validation_config["sample_selection"]
 
     # Load protein constraints
@@ -53,6 +56,7 @@ def load_config(path: str = "config/config.yaml"):
         'min_rotatable_bonds': min_rotatable_bonds,
         'max_rotatable_bonds': max_rotatable_bonds,
         'num_molecules': num_molecules,
+        'psichic_mode': psichic_mode,
         'entropy_bonus_threshold': entropy_bonus_threshold,
         'entropy_start_weight': entropy_start_weight,
         'entropy_start_epoch': entropy_start_epoch,
@@ -62,6 +66,8 @@ def load_config(path: str = "config/config.yaml"):
         'random_valid_reaction': random_valid_reaction,
         'num_molecules_boltz': num_molecules_boltz,
         'boltz_metric': boltz_metric,
+        'combination_strategy': combination_strategy,
+        'boltz_mode': boltz_mode,
         'binding_pocket': binding_pocket,
         'max_distance': max_distance,
         'force': force,
