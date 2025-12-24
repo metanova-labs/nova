@@ -156,13 +156,23 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
     bt.logging.info(f"GitHub: {len(file_paths)} paths → {len(decrypted_submissions)} decrypted")
     return decrypted_submissions, push_timestamps
 
-async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_block, current_block, no_submission_blocks, github_headers, btd):
+async def gather_and_decrypt_commitments(
+    subtensor,
+    metagraph,
+    netuid: int,
+    start_block: int,
+    current_block: int,
+    no_submission_blocks: int,
+    github_headers: dict,
+    btd,
+    config: dict
+) -> tuple[dict, dict, dict, dict]:
     # Get commitments
     current_block_hash = await subtensor.determine_block_hash(current_block)
     current_commitments = await get_commitments(
-        subtensor, 
-        metagraph, 
-        current_block_hash, 
+        subtensor,
+        metagraph,
+        current_block_hash,
         netuid=netuid,
         min_block=start_block,
         max_block=current_block - no_submission_blocks
@@ -171,7 +181,7 @@ async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_blo
 
     # Decrypt submissions
     decrypted_submissions, push_timestamps = decrypt_submissions(
-        current_commitments, github_headers, btd, {"num_molecules": 1}  # Default config
+        current_commitments, github_headers, btd, config
     )
 
     # Prepare structured data
