@@ -141,7 +141,7 @@ def calculate_final_scores(
     return score_dict
 
 
-def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: str = "max", model_name: str = "boltz") -> Optional[int]:
+def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: str = "max", model_name: str = "boltz", log_message: bool = True) -> Optional[int]:
     """
     Determines the winning UID based on final score.
     In case of ties, earliest submission time is used as the tiebreaker.
@@ -150,6 +150,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
         score_dict: Dictionary containing final scores for each UID
         mode: "max" or "min"
         model_name: "boltz" or "psichic"
+        log_message: whether to log the message
     Returns:
         Optional[int]: Winning UID or None if no valid scores found
     """
@@ -230,8 +231,9 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
         if len(best_uids) == 1:
             winner_block = score_dict[best_uids[0]].get('block_submitted')
             current_epoch = winner_block // 361 if winner_block else None
-            #bt.logging.info(f"Epoch {current_epoch} PSICHIC winner: UID={best_uids_psichic[0]}, winning_score={best_score_psichic}")
             winner = best_uids[0]
+            if log_message:
+                bt.logging.info(f"Epoch {current_epoch} winner: UID={winner}, score={best_score}, block={winner_block}")
         else:
             winner = tie_breaker(best_uids, best_score, model_name, print_message=False)
     else:

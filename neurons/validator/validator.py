@@ -169,8 +169,8 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             bt.logging.debug(f"boltz_score_averages: {boltz_score_averages}")
 
         # Determine winner for each model
-        winner_psichic = determine_winner(score_dict, mode=config['psichic_mode'], model_name="psichic")
-        winner_boltz = determine_winner(score_dict, mode=config['boltz_mode'], model_name="boltz")
+        winner_psichic = determine_winner(score_dict, mode=config['psichic_mode'], model_name="psichic", log_message=False)
+        winner_boltz = determine_winner(score_dict, mode=config['boltz_mode'], model_name="boltz", log_message=True)
 
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
