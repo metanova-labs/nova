@@ -221,7 +221,7 @@ properties:
             if uid in final_boltz_scores:
                 data['boltz_score'] = np.mean(final_boltz_scores[uid])
             else:
-                data['boltz_score'] = math.inf
+                data['boltz_score'] = -math.inf
 
     def combine_boltz_scores(self, scores: dict, smiles: str) -> float:
         if self.subnet_config['combination_strategy'] == "average":
@@ -232,5 +232,5 @@ properties:
             return normalized_score
         else:
             bt.logging.error(f"Invalid combination strategy: {self.subnet_config['combination_strategy']}")
-            return math.inf
+            return -math.inf
             
