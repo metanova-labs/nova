@@ -23,7 +23,7 @@ import bittensor as bt
 
 from src.boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
-from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles
+from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles, get_heavy_atom_count
 
 def _seed_for_record(rec_id, base_seed):
     h = hashlib.sha256(str(rec_id).encode()).digest()
@@ -199,16 +199,21 @@ properties:
         # Distribute results to all UIDs
         self.per_molecule_metric = {}
         final_boltz_scores = {}
+        bt.logging.debug(f"molecules: {self.unique_molecules}")
         for smiles, id_list in self.unique_molecules.items():
             for uid, mol_idx in id_list:
                 if uid not in final_boltz_scores:
                     final_boltz_scores[uid] = []
                     
-                metric_value = scores[mol_idx][self.subnet_config['boltz_metric']]
-                final_boltz_scores[uid].append(metric_value)
+                if len(self.subnet_config['boltz_metric']) > 1:
+                    final_score = self.combine_boltz_scores(scores[mol_idx], smiles)
+                else:
+                    final_score = scores[mol_idx][self.subnet_config['boltz_metric']]
+
+                final_boltz_scores[uid].append(final_score)
                 if uid not in self.per_molecule_metric:
                     self.per_molecule_metric[uid] = {}
-                self.per_molecule_metric[uid][smiles] = metric_value
+                self.per_molecule_metric[uid][smiles] = final_score
         bt.logging.debug(f"final_boltz_scores: {final_boltz_scores}")
 
 
@@ -218,3 +223,14 @@ properties:
             else:
                 data['boltz_score'] = math.inf
 
+    def combine_boltz_scores(self, scores: dict, smiles: str) -> float:
+        if self.subnet_config['combination_strategy'] == "average":
+            return np.mean([scores[metric] for metric in self.subnet_config['boltz_metric']])
+        elif self.subnet_config['combination_strategy'] == 'heavy_atom_normalization':
+            heavy_atom_count = get_heavy_atom_count(smiles)
+            normalized_score = (scores[self.subnet_config['boltz_metric'][0]] - scores[self.subnet_config['boltz_metric'][1]]) / heavy_atom_count
+            return normalized_score
+        else:
+            bt.logging.error(f"Invalid combination strategy: {self.subnet_config['combination_strategy']}")
+            return math.inf
+            
