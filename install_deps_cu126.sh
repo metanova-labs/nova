@@ -11,7 +11,7 @@ source "$HOME/.cargo/env"
 
 # Install system build/env tools (Ubuntu/Debian):
 sudo apt update && sudo apt install -y build-essential
-sudo apt install python3.12-venv
+sudo apt install -y python3.12-venv
 
 # Clone timelock at specific commit:
 git clone https://github.com/ideal-lab5/timelock.git
