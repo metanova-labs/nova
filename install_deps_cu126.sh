@@ -13,6 +13,10 @@ source "$HOME/.cargo/env"
 sudo apt update && sudo apt install -y build-essential
 sudo apt install -y python3.12-venv
 
+# Check if .venv and timelock exist and delete them if they do (for reinstalling)
+[ -d .venv ] && rm -rf .venv
+[ -d timelock ] && rm -rf timelock
+
 # Clone timelock at specific commit:
 git clone https://github.com/ideal-lab5/timelock.git
 cd timelock
