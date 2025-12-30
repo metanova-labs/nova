@@ -9,7 +9,7 @@ async def set_weights(winner_psichic, winner_boltz, config):
     if winner_psichic is not None or winner_boltz is not None:
         load_dotenv()
         
-        burn_rate = 0.737
+        burn_rate = 0.722
         
         wallet_name = config.wallet.name
         wallet_hotkey = config.wallet.hotkey
