@@ -74,7 +74,8 @@ async def apply_external_scores(
         if not boltz_per_molecule:
             return score_dict
 
-        post_items: List[Tuple[str, Dict[str, Any]]] = []
+        molecule_validations: List[Dict[str, Any]] = []
+        submitted_names: List[str] = []
         uid_to_names: Dict[int, List[str]] = {}
         for uid, smiles_to_metric in boltz_per_molecule.items():
             mol_data = valid_molecules_by_uid.get(uid) or {}
@@ -93,40 +94,36 @@ async def apply_external_scores(
                 except Exception:
                     continue
 
-                payload = {
+                molecule_validation = {
                     "name": name,
-                    "epoch": int(epoch),
                     "score": score_val,
                     "target_score": score_val,
                     "antitarget_score": None,
                 }
-                post_items.append((name, payload))
+                molecule_validations.append(molecule_validation)
+                submitted_names.append(name)
                 uid_to_names.setdefault(uid, []).append(name)
 
-        async def _post_one(name: str, payload: Dict[str, Any]) -> Tuple[str, int]:
-            status_code, _ = await _post_json(base_url + "/validations", payload, headers)
-            return name, status_code
-
-        total_posts = 0
-        if post_items:
-            results = await asyncio.gather(
-                *[_post_one(name, payload) for name, payload in post_items]
-            )
-            for name, status_code in results:
-                if status_code >= 400:
-                    bt.logging.warning(
-                        f"Score-share POST failed for {name}@{epoch} with status {status_code}; using local scores."
-                    )
-                    return score_dict
-                total_posts += 1
-
-        if total_posts == 0:
+        if not molecule_validations:
             return score_dict
+
+        # Submit all validations for this epoch
+        epoch_validations_request = {
+            "epoch": int(epoch),
+            "molecules": molecule_validations,
+        }
+        status_code, _ = await _post_json(base_url + "/validations/batch", epoch_validations_request, headers)
+        if status_code >= 400:
+            bt.logging.warning(
+                f"Score-share POST failed for epoch {epoch} with status {status_code}; using local scores."
+            )
+            return score_dict
+        total_validations = len(molecule_validations)
 
         if subtensor is not None and epoch_end_block is not None:
             target_block = max(epoch_end_block - int(finalization_buffer_blocks), 0)
             bt.logging.info(
-                f"Submitted {total_posts} validation(s) to score-share API; "
+                f"Submitted {total_validations} validation(s) to score-share API; "
                 f"waiting until block {target_block}, {finalization_buffer_blocks} blocks before epoch end, "
                 f"before retrieving averages"
             )
@@ -139,12 +136,12 @@ async def apply_external_scores(
                 return score_dict
         else:
             bt.logging.info(
-                f"Submitted {total_posts} validation(s) to score-share API, "
+                f"Submitted {total_validations} validation(s) to score-share API, "
                 f"waiting {WAIT_SECONDS}s before retrieving averages"
             )
             await asyncio.sleep(WAIT_SECONDS)
 
-        unique_names: set[str] = {name for name, _ in post_items}
+        unique_names: set[str] = set(submitted_names)
 
         if not unique_names:
             return score_dict
