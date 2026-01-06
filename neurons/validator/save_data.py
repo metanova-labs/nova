@@ -97,12 +97,25 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
         molecule_details = []
         for idx in range(len(smiles_list)):
             per_mol_boltz = None
+            comp_affinity_prob = None
+            comp_affinity_pred = None
+            comp_heavy_atoms = None
             try:
                 if getattr(boltz, 'per_molecule_metric', None):
                     if boltz_selected_flags and (idx < len(boltz_selected_flags)) and boltz_selected_flags[idx]:
                         per_mol_boltz = boltz.per_molecule_metric.get(uid, {}).get(smiles_list[idx])
+                        
+                per_molecule_components = getattr(boltz, 'per_molecule_components', None)
+                if per_molecule_components:
+                    comp = per_molecule_components.get(uid, {}).get(smiles_list[idx], {})
+                    comp_affinity_prob = comp.get("affinity_probability_binary")
+                    comp_affinity_pred = comp.get("affinity_pred_value")
+                    comp_heavy_atoms = comp.get("heavy_atom_count")
             except Exception:
                 per_mol_boltz = None
+                comp_affinity_prob = None
+                comp_affinity_pred = None
+                comp_heavy_atoms = None
 
             molecule_details.append({
                 "name": names_list[idx],
@@ -114,6 +127,9 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
                 "score_after_repetition": _safe_num(scores_after_repetition[idx] if idx < len(scores_after_repetition) else -math.inf),
                 "boltz_selected": (boltz_selected_flags[idx] if idx < len(boltz_selected_flags) else None),
                 "boltz_score": (None if per_mol_boltz is None else _safe_num(float(per_mol_boltz))),
+                "affinity_probability_binary": (None if comp_affinity_prob is None else _safe_num(float(comp_affinity_prob))),
+                "affinity_pred_value": (None if comp_affinity_pred is None else _safe_num(float(comp_affinity_pred))),
+                "heavy_atom_count": comp_heavy_atoms,
             })
 
         submissions.append({

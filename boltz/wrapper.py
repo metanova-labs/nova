@@ -46,6 +46,7 @@ class BoltzWrapper:
 
         bt.logging.debug(f"BoltzWrapper initialized")
         self.per_molecule_metric = {}
+        self.per_molecule_components = {}
         
         self.base_seed = 68
         random.seed(self.base_seed)
@@ -198,6 +199,7 @@ properties:
 
         # Distribute results to all UIDs
         self.per_molecule_metric = {}
+        self.per_molecule_components = {}
         final_boltz_scores = {}
         bt.logging.debug(f"molecules: {self.unique_molecules}")
         for smiles, id_list in self.unique_molecules.items():
@@ -214,6 +216,26 @@ properties:
                 if uid not in self.per_molecule_metric:
                     self.per_molecule_metric[uid] = {}
                 self.per_molecule_metric[uid][smiles] = final_score
+
+                try:
+                    affinity_probability_binary = scores[mol_idx].get("affinity_probability_binary")
+                    affinity_pred_value = scores[mol_idx].get("affinity_pred_value")
+                except Exception:
+                    affinity_probability_binary = None
+                    affinity_pred_value = None
+
+                try:
+                    heavy_atom_count = get_heavy_atom_count(smiles)
+                except Exception:
+                    heavy_atom_count = None
+
+                if uid not in self.per_molecule_components:
+                    self.per_molecule_components[uid] = {}
+                self.per_molecule_components[uid][smiles] = {
+                    "affinity_probability_binary": affinity_probability_binary,
+                    "affinity_pred_value": affinity_pred_value,
+                    "heavy_atom_count": heavy_atom_count,
+                }
         bt.logging.debug(f"final_boltz_scores: {final_boltz_scores}")
 
 
