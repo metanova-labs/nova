@@ -10,7 +10,7 @@ FINALIZATION_BUFFER_BLOCKS = 30
 
 async def _post_json(url: str, json_body: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     def _do_post():
-        resp = requests.post(url, json=json_body, headers=headers, timeout=10)
+        resp = requests.post(url, json=json_body, headers=headers, timeout=120)
         try:
             return resp.status_code, resp.json()
         except Exception:
@@ -21,7 +21,7 @@ async def _post_json(url: str, json_body: Dict[str, Any], headers: Dict[str, str
 
 async def _get_json(url: str, headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     def _do_get():
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=20)
         try:
             return resp.status_code, resp.json()
         except Exception:
