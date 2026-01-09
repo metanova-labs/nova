@@ -206,7 +206,7 @@ properties:
             for uid, mol_idx in id_list:
                 if uid not in final_boltz_scores:
                     final_boltz_scores[uid] = []
-                    
+
                 if len(self.subnet_config['boltz_metric']) > 1:
                     final_score = self.combine_boltz_scores(scores[mol_idx], smiles)
                 else:
@@ -217,12 +217,44 @@ properties:
                     self.per_molecule_metric[uid] = {}
                 self.per_molecule_metric[uid][smiles] = final_score
 
+                metrics = scores[mol_idx]
                 try:
-                    affinity_probability_binary = scores[mol_idx].get("affinity_probability_binary")
-                    affinity_pred_value = scores[mol_idx].get("affinity_pred_value")
+                    affinity_probability_binary = metrics.get("affinity_probability_binary")
+                    affinity_pred_value = metrics.get("affinity_pred_value")
+                    affinity_probability_binary1 = metrics.get("affinity_probability_binary1")
+                    affinity_pred_value1 = metrics.get("affinity_pred_value1")
+                    affinity_probability_binary2 = metrics.get("affinity_probability_binary2")
+                    affinity_pred_value2 = metrics.get("affinity_pred_value2")
+
+                    confidence_score = metrics.get("confidence_score")
+                    ptm = metrics.get("ptm")
+                    iptm = metrics.get("iptm")
+                    ligand_iptm = metrics.get("ligand_iptm")
+                    protein_iptm = metrics.get("protein_iptm")
+                    complex_plddt = metrics.get("complex_plddt")
+                    complex_iplddt = metrics.get("complex_iplddt")
+                    complex_pde = metrics.get("complex_pde")
+                    complex_ipde = metrics.get("complex_ipde")
+                    chains_ptm = metrics.get("chains_ptm")
+                    pair_chains_iptm = metrics.get("pair_chains_iptm")
                 except Exception:
                     affinity_probability_binary = None
                     affinity_pred_value = None
+                    affinity_probability_binary1 = None
+                    affinity_pred_value1 = None
+                    affinity_probability_binary2 = None
+                    affinity_pred_value2 = None
+                    confidence_score = None
+                    ptm = None
+                    iptm = None
+                    ligand_iptm = None
+                    protein_iptm = None
+                    complex_plddt = None
+                    complex_iplddt = None
+                    complex_pde = None
+                    complex_ipde = None
+                    chains_ptm = None
+                    pair_chains_iptm = None
 
                 try:
                     heavy_atom_count = get_heavy_atom_count(smiles)
@@ -234,6 +266,21 @@ properties:
                 self.per_molecule_components[uid][smiles] = {
                     "affinity_probability_binary": affinity_probability_binary,
                     "affinity_pred_value": affinity_pred_value,
+                    "affinity_probability_binary1": affinity_probability_binary1,
+                    "affinity_pred_value1": affinity_pred_value1,
+                    "affinity_probability_binary2": affinity_probability_binary2,
+                    "affinity_pred_value2": affinity_pred_value2,
+                    "confidence_score": confidence_score,
+                    "ptm": ptm,
+                    "iptm": iptm,
+                    "ligand_iptm": ligand_iptm,
+                    "protein_iptm": protein_iptm,
+                    "complex_plddt": complex_plddt,
+                    "complex_iplddt": complex_iplddt,
+                    "complex_pde": complex_pde,
+                    "complex_ipde": complex_ipde,
+                    "chains_ptm": chains_ptm,
+                    "pair_chains_iptm": pair_chains_iptm,
                     "heavy_atom_count": heavy_atom_count,
                 }
         bt.logging.debug(f"final_boltz_scores: {final_boltz_scores}")

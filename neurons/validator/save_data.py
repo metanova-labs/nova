@@ -99,6 +99,21 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
             per_mol_boltz = None
             comp_affinity_prob = None
             comp_affinity_pred = None
+            comp_affinity_prob1 = None
+            comp_affinity_pred1 = None
+            comp_affinity_prob2 = None
+            comp_affinity_pred2 = None
+            comp_confidence_score = None
+            comp_ptm = None
+            comp_iptm = None
+            comp_ligand_iptm = None
+            comp_protein_iptm = None
+            comp_complex_plddt = None
+            comp_complex_iplddt = None
+            comp_complex_pde = None
+            comp_complex_ipde = None
+            comp_chains_ptm = None
+            comp_pair_chains_iptm = None
             comp_heavy_atoms = None
             try:
                 if getattr(boltz, 'per_molecule_metric', None):
@@ -110,11 +125,41 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
                     comp = per_molecule_components.get(uid, {}).get(smiles_list[idx], {})
                     comp_affinity_prob = comp.get("affinity_probability_binary")
                     comp_affinity_pred = comp.get("affinity_pred_value")
+                    comp_affinity_prob1 = comp.get("affinity_probability_binary1")
+                    comp_affinity_pred1 = comp.get("affinity_pred_value1")
+                    comp_affinity_prob2 = comp.get("affinity_probability_binary2")
+                    comp_affinity_pred2 = comp.get("affinity_pred_value2")
+                    comp_confidence_score = comp.get("confidence_score")
+                    comp_ptm = comp.get("ptm")
+                    comp_iptm = comp.get("iptm")
+                    comp_ligand_iptm = comp.get("ligand_iptm")
+                    comp_protein_iptm = comp.get("protein_iptm")
+                    comp_complex_plddt = comp.get("complex_plddt")
+                    comp_complex_iplddt = comp.get("complex_iplddt")
+                    comp_complex_pde = comp.get("complex_pde")
+                    comp_complex_ipde = comp.get("complex_ipde")
+                    comp_chains_ptm = comp.get("chains_ptm")
+                    comp_pair_chains_iptm = comp.get("pair_chains_iptm")
                     comp_heavy_atoms = comp.get("heavy_atom_count")
             except Exception:
                 per_mol_boltz = None
                 comp_affinity_prob = None
                 comp_affinity_pred = None
+                comp_affinity_prob1 = None
+                comp_affinity_pred1 = None
+                comp_affinity_prob2 = None
+                comp_affinity_pred2 = None
+                comp_confidence_score = None
+                comp_ptm = None
+                comp_iptm = None
+                comp_ligand_iptm = None
+                comp_protein_iptm = None
+                comp_complex_plddt = None
+                comp_complex_iplddt = None
+                comp_complex_pde = None
+                comp_complex_ipde = None
+                comp_chains_ptm = None
+                comp_pair_chains_iptm = None
                 comp_heavy_atoms = None
 
             molecule_details.append({
@@ -129,6 +174,21 @@ def _build_submissions_payload(config, metagraph, boltz, current_block: int, sta
                 "boltz_score": (None if per_mol_boltz is None else _safe_num(float(per_mol_boltz))),
                 "affinity_probability_binary": (None if comp_affinity_prob is None else _safe_num(float(comp_affinity_prob))),
                 "affinity_pred_value": (None if comp_affinity_pred is None else _safe_num(float(comp_affinity_pred))),
+                "affinity_probability_binary1": (None if comp_affinity_prob1 is None else _safe_num(float(comp_affinity_prob1))),
+                "affinity_pred_value1": (None if comp_affinity_pred1 is None else _safe_num(float(comp_affinity_pred1))),
+                "affinity_probability_binary2": (None if comp_affinity_prob2 is None else _safe_num(float(comp_affinity_prob2))),
+                "affinity_pred_value2": (None if comp_affinity_pred2 is None else _safe_num(float(comp_affinity_pred2))),
+                "confidence_score": (None if comp_confidence_score is None else _safe_num(float(comp_confidence_score))),
+                "ptm": (None if comp_ptm is None else _safe_num(float(comp_ptm))),
+                "iptm": (None if comp_iptm is None else _safe_num(float(comp_iptm))),
+                "ligand_iptm": (None if comp_ligand_iptm is None else _safe_num(float(comp_ligand_iptm))),
+                "protein_iptm": (None if comp_protein_iptm is None else _safe_num(float(comp_protein_iptm))),
+                "complex_plddt": (None if comp_complex_plddt is None else _safe_num(float(comp_complex_plddt))),
+                "complex_iplddt": (None if comp_complex_iplddt is None else _safe_num(float(comp_complex_iplddt))),
+                "complex_pde": (None if comp_complex_pde is None else _safe_num(float(comp_complex_pde))),
+                "complex_ipde": (None if comp_complex_ipde is None else _safe_num(float(comp_complex_ipde))),
+                "chains_ptm": comp_chains_ptm,
+                "pair_chains_iptm": comp_pair_chains_iptm,
                 "heavy_atom_count": comp_heavy_atoms,
             })
 
