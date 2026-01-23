@@ -1,0 +1,29 @@
+# boltzgen config file
+
+remove_files: true # Remove files after processing
+
+# boltzgen params
+protocol: nanobody-anything # nanobody-anything or protein-anything?
+num_designs: 1
+skip_inverse_folding: true
+execute_steps:
+  - design # only included here for initial coordinate generation. Input sequence is not changed (num_designs should be 1)
+  - folding
+  - design_folding
+  - analysis
+# override default step scale and noise scale schedules for consistency
+step_scale: 2.0
+noise_scale: 0.88
+
+# metrics to collect and ranking mode: min or max
+metrics:
+  design_iiptm: max, 
+  design_ptm: max, 
+  design_to_target_iptm: max, 
+  min_design_to_target_pae: min, 
+  interaction_pae: min, 
+  plip_hbonds_refolded: max, 
+  plip_saltbridge_refolded: max, 
+  delta_sasa_refolded: max, 
+  liability_score: min, 
+  liability_num_violations: min
