@@ -10,6 +10,7 @@ from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Literal, Optional
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import random
 import numpy as np
@@ -35,6 +36,8 @@ from boltz.data.parse.yaml import parse_yaml
 from boltz.data.types import MSA, Manifest, Record
 from boltz.data.write.writer import BoltzAffinityWriter, BoltzWriter
 from boltz.model.models.boltz2 import Boltz2
+
+import bittensor as bt
 
 CCD_URL = "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl"
 MOL_URL = "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar"
@@ -736,9 +739,27 @@ def process_inputs(
     preprocessing_threads = min(preprocessing_threads, len(data))
     click.echo(f"Processing {len(data)} inputs with {preprocessing_threads} threads.")
 
-    if preprocessing_threads > 1 and len(data) > 1:
-        with Pool(preprocessing_threads) as pool:
-            list(tqdm(pool.imap(process_input_partial, data), total=len(data)))
+    is_daemonic = multiprocessing.current_process().daemon
+    can_use_multiprocessing = (
+        preprocessing_threads > 1 
+        and len(data) > 1 
+        and not is_daemonic
+    )
+    
+    if can_use_multiprocessing:
+        try:
+            with Pool(preprocessing_threads) as pool:
+                list(tqdm(pool.imap(process_input_partial, data), total=len(data)))
+        except AssertionError as e:
+            if "daemonic processes are not allowed to have children" in str(e):
+                with ThreadPoolExecutor(max_workers=preprocessing_threads) as executor:
+                    list(tqdm(executor.map(process_input_partial, data), total=len(data)))
+            else:
+                bt.logging.error(f"Error using multiprocessing: {e}")
+    elif preprocessing_threads > 1 and len(data) > 1 and is_daemonic:
+        click.echo("Using threading for preprocessing")
+        with ThreadPoolExecutor(max_workers=preprocessing_threads) as executor:
+            list(tqdm(executor.map(process_input_partial, data), total=len(data)))
     else:
         for path in tqdm(data):
             process_input_partial(path)

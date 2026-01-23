@@ -1199,7 +1199,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
                 ref_mol = get_mol(code, ccd, mol_dir)
 
                 if affinity:
-                    affinity_mw = AllChem.Descriptors.MolWt(ref_mol)
+                    affinity_mw = Chem.Descriptors.MolWt(ref_mol)
 
                 # Parse residue
                 residue = parse_ccd_residue(
@@ -1251,7 +1251,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
                 raise ValueError(msg)
 
             mol_no_h = AllChem.RemoveHs(mol, sanitize=False)
-            affinity_mw = AllChem.Descriptors.MolWt(mol_no_h) if affinity else None
+            affinity_mw = Chem.Descriptors.MolWt(mol_no_h) if affinity else None
             extra_mols[f"LIG{ligand_id}"] = mol_no_h
             residue = parse_ccd_residue(
                 name=f"LIG{ligand_id}",
