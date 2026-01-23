@@ -428,7 +428,7 @@ The `boltzgen run` command executes the BoltzGen binder design pipeline. Here ar
 
 ### Model and Data Download Options
 - `--force_download` - Force a (re)-download of models and data.
-- `--models_token MODELS_TOKEN` - Secret token to use for our models hosting service (Hugging Face)
+- `--models_token MODELS_TOKEN` - Secret token to use for our models hosting service (Hugging Face). Default: `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`
 - `--cache CACHE` - Directory where downloaded models will be stored. Default: `~/.cache`
 
 ## `boltzgen download`
