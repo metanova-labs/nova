@@ -1,10 +1,10 @@
-numpy<=2.1
+#numpy<=2.1
 biopython==1.85
 bittensor==9.9.0
 cryptography==45.0.5
 datasets==3.3.2
 fair-esm==2.0.0
-huggingface-hub==0.29.1
+huggingface-hub==0.36.0
 lifelines==0.30.0
 pandas==2.2.3
 python-dotenv==1.0.1
@@ -12,3 +12,4 @@ rdkit==2024.9.4
 requests>=2.32.4
 substrate-interface==1.7.11
 scikit-learn==1.6.1
+pytorch-lightning==2.5.5
