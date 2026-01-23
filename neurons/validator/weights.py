@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 import asyncio
 
-async def set_weights(winner_psichic, winner_boltz, config):
+async def set_weights(winner_molecules, winner_nanobodies, config):
     if winner_psichic is not None or winner_boltz is not None:
         load_dotenv()
         
@@ -39,7 +39,7 @@ async def set_weights(winner_psichic, winner_boltz, config):
         weights = [0.0] * n
 
         # Validate the user-provided target UIDs
-        for target_uid in [winner_psichic, winner_boltz]:
+        for target_uid in [winner_molecules, winner_nanobodies]:
             if target_uid is not None:
                 if not (0 <= target_uid < n):
                     bt.logging.error(f"Error: target_uid {target_uid} out of range [0, {n-1}]. Exiting.")
@@ -47,24 +47,13 @@ async def set_weights(winner_psichic, winner_boltz, config):
 
         # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
-        # if winner_psichic and winner_boltz:
-        #     if winner_psichic == winner_boltz:
-        #         weights[winner_psichic] = 1.0 - burn_rate
-        #     else:
-        #         weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
-        #         weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
+        if winner_molecules and winner_nanobodies:
+            if winner_molecules == winner_nanobodies:
+                weights[winner_molecules] = 1.0 - burn_rate
+            else:
+                weights[winner_molecules] = (1.0 - burn_rate) * (1 - config.nanobody_weight)
+                weights[winner_nanobodies] = (1.0 - burn_rate) * config.nanobody_weight
 
-        # elif winner_psichic and not winner_boltz:
-        #     weights[winner_psichic] = 1.0 - burn_rate
-
-        # elif not winner_psichic and winner_boltz:
-        #     weights[winner_boltz] = 1.0 - burn_rate
-        # else:
-        #     bt.logging.error("No valid molecule commitment found for current epoch.")
-        #     return
-
-        if winner_boltz:
-            weights[winner_boltz] = 1.0 - burn_rate
         else:
             bt.logging.error("No valid molecule commitment found for current epoch.")
             return

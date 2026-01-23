@@ -1,165 +1,101 @@
-"""
-Final scoring and winner determination functionality for the validator
-"""
-
 import math
 import datetime
 from typing import Optional
 
 import bittensor as bt
-from utils import calculate_dynamic_entropy
 
 
-def calculate_final_scores(
+def calculate_scores_for_type(
     score_dict: dict[int, dict[str, list[list[float]]]],
-    valid_molecules_by_uid: dict[int, dict[str, list[str]]],
-    molecule_name_counts: dict[str, int],
+    valid_items_by_uid: dict[int, dict[str, list[str]]],
+    item_type: str,
     config: dict,
-    current_epoch: int
 ) -> dict[int, dict[str, list[list[float]]]]:
     """
-    Calculates final scores per molecule for each UID, considering target and antitarget scores.
-    Applies entropy bonus and tie-breaking by earliest submission block.
-    
-    Args:
-        score_dict: Dictionary containing scores for each UID
-        valid_molecules_by_uid: Dictionary of valid molecules by UID
-        molecule_name_counts: Count of molecule name occurrences
-        config: Configuration dictionary
-        current_epoch: Current epoch number
-        
-    Returns:
-        Updated score_dict with final scores calculated
+    Calculates scores for a given item type for each UID.
     """
     
-    dynamic_entropy_weight = calculate_dynamic_entropy(
-        starting_weight=config['entropy_start_weight'],
-        step_size=config['entropy_step_size'],
-        start_epoch=config['entropy_start_epoch'],
-        current_epoch=current_epoch
-    )
-    
-    # Go through each UID scored
-    for uid, data in valid_molecules_by_uid.items():
-        targets = score_dict[uid]['target_scores']
-        antitargets = score_dict[uid]['antitarget_scores']
-        entropy = score_dict[uid]['entropy']
-        submission_block = score_dict[uid]['block_submitted']
+    if item_type == "molecule":
+        num_items = config['num_molecules']
+        score_key = 'molecule_scores'
+        replace_value = -math.inf if config['boltz_mode'] == 'max' else math.inf
+        id_key = 'names'
+        item_key = 'smiles'
+    elif item_type == "nanobody":
+        num_items = config['num_sequences']
+        score_key = 'nanobody_scores'
+        replace_value = -math.inf if config['boltzgen_rank_mode'] == 'max' else math.inf
+        id_key = 'hashes'
+        item_key = 'sequences'
+    else:
+        bt.logging.error(f"Invalid item type: {item_type}")
+        return None
 
-        # Replace None with -inf
-        targets = [[-math.inf if not s else s for s in sublist] for sublist in targets]
-        antitargets = [[-math.inf if not s else s for s in sublist] for sublist in antitargets]
-
-        # Get number of molecules (length of any target score list)
-        if not targets or not targets[0]:
+    for uid, data in valid_items_by_uid.items():
+        if uid not in score_dict:
+            bt.logging.error(f"UID={uid}: not found in score_dict. Skipping.")
             continue
-        num_molecules = len(targets[0])
-
-        # Calculate scores per molecule
-        combined_molecule_scores = []
-        molecule_scores_after_repetition = []
+        if score_key not in score_dict[uid]:
+            bt.logging.error(f"UID={uid}: {score_key} not found in score_dict. Skipping.")
+            continue
         
-        for mol_idx in range(num_molecules):
+        targets = score_dict[uid][score_key]
+        block_submitted = score_dict[uid]['block_submitted']
+
+        targets = [[replace_value if not s else s for s in sublist] for sublist in targets]
+        combined_item_scores = []
+        
+        for item_idx in range(num_items):
             # Calculate average target score for this molecule
-            target_scores_for_mol = [target_list[mol_idx] for target_list in targets]
-            if any(score == -math.inf for score in target_scores_for_mol):
-                combined_molecule_scores.append(-math.inf)
-                molecule_scores_after_repetition.append(-math.inf)
+            target_scores_for_item = [target_list[item_idx] for target_list in targets]
+            if any(score == -math.inf or score == math.inf for score in target_scores_for_item):
+                combined_item_scores.append(replace_value)
                 continue
-            avg_target = sum(target_scores_for_mol) / len(target_scores_for_mol)
+            avg_target = sum(target_scores_for_item) / len(target_scores_for_item)
+            combined_item_scores.append(avg_target)
 
-            # Calculate average antitarget score for this molecule
-            antitarget_scores_for_mol = [antitarget_list[mol_idx] for antitarget_list in antitargets]
-            if any(score == -math.inf for score in antitarget_scores_for_mol):
-                combined_molecule_scores.append(-math.inf)
-                molecule_scores_after_repetition.append(-math.inf)
-                continue
-            avg_antitarget = sum(antitarget_scores_for_mol) / len(antitarget_scores_for_mol)
+        score_dict[uid][f"combined_{item_type}_scores"] = combined_item_scores
+        score_dict[uid][f"final_{item_type}_score"] = sum(combined_item_scores)
 
-            # Calculate score after target/antitarget combination
-            mol_score = avg_target - (config['antitarget_weight'] * avg_antitarget)
-            combined_molecule_scores.append(mol_score)
-
-            # Calculate molecule repetition penalty
-            if config['molecule_repetition_weight'] != 0:
-                if mol_score > config['molecule_repetition_threshold']:
-                    denominator = config['molecule_repetition_weight'] * molecule_name_counts[data['names'][mol_idx]]
-                    if denominator == 0:
-                        mol_score = mol_score  
-                    else:
-                        mol_score = mol_score / denominator
-                else:
-                    mol_score = mol_score * config['molecule_repetition_weight'] * molecule_name_counts[data['names'][mol_idx]]
-            
-            molecule_scores_after_repetition.append(mol_score)
-        
-        # Store all score lists in score_dict
-        score_dict[uid]['combined_molecule_scores'] = combined_molecule_scores
-        score_dict[uid]['molecule_scores_after_repetition'] = molecule_scores_after_repetition
-        score_dict[uid]['final_score'] = sum(molecule_scores_after_repetition)
-                
-        # Apply entropy bonus for scores above threshold - disabled while num_molecules is 1
-        # if score_dict[uid]['final_score'] > config['entropy_bonus_threshold'] and entropy is not None:
-        #     score_dict[uid]['final_score'] = score_dict[uid]['final_score'] * (1 + (dynamic_entropy_weight * entropy))
-
-        boltz_score = score_dict[uid]['boltz_score']
-        entropy_boltz = score_dict[uid]['entropy_boltz']
-        threshold_boltz = config.get('entropy_bonus_threshold')
-
-        if (
-            boltz_score is not None
-            and entropy_boltz is not None
-            and math.isfinite(boltz_score)
-            and math.isfinite(entropy_boltz)
-            and boltz_score < threshold_boltz
-            and entropy_boltz > 0
-            and config['num_molecules_boltz'] > 1
-        ):
-            score_dict[uid]['boltz_score'] = boltz_score * (1 + (dynamic_entropy_weight * entropy_boltz))
-
-        # Log details
-        # Prepare detailed log info
-        smiles_list = data.get('smiles', [])
-        names_list = data.get('names', [])
-        # Transpose target/antitarget scores to get per-molecule lists
-        target_scores_per_mol = list(map(list, zip(*targets))) if targets and targets[0] else []
-        antitarget_scores_per_mol = list(map(list, zip(*antitargets))) if antitargets and antitargets[0] else []
+        id_list = data.get(id_key, [])
+        item_list = data.get(item_key, [])
         log_lines = [
             f"UID={uid}",
-            f"  Molecule names: {names_list}",
-            f"  SMILES: {smiles_list}",
-            # f"  Target scores per molecule: {target_scores_per_mol}",
-            # f"  Antitarget scores per molecule: {antitarget_scores_per_mol}",
-            #f"  Entropy: {entropy}",
-            f"  Boltz scores: {score_dict[uid]['boltz_score']}",
-            #f"  Entropy Boltz: {score_dict[uid]['entropy_boltz'] if score_dict[uid]['entropy_boltz'] is not None else 'None'}",
-            #f"  Dynamic entropy weight: {dynamic_entropy_weight}",
-            #f"  Final score: {score_dict[uid]['final_score']}"
+            f"  {item_type} {id_key}: {id_list}",
+            f"  {item_type} {item_key}: {item_list}",
         ]
+        if num_items > 1:
+            log_lines.append(f"  {item_type} scores: {combined_item_scores}")
+            log_lines.append(f"  {item_type} final score: {score_dict[uid][f'final_{item_type}_score']}")
+        else:
+            log_lines.append(f"  final {item_type} score: {score_dict[uid][f'final_{item_type}_score']}")
         bt.logging.info("\n".join(log_lines))
 
     return score_dict
 
-
-def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: str = "max", model_name: str = "boltz") -> Optional[int]:
+def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], config: dict, item_type: str) -> Optional[int]:
     """
-    Determines the winning UID based on final score.
+    Determines the winning UID based on final score for a given item type.
     In case of ties, earliest submission time is used as the tiebreaker.
     
     Args:
         score_dict: Dictionary containing final scores for each UID
-        mode: "max" or "min"
-        model_name: "boltz" or "psichic"
+        config: subnet config dict
+        type: item type to determine winner for (molecule or nanobody)
     Returns:
         Optional[int]: Winning UID or None if no valid scores found
     """
 
-    if mode == "max":
-        best_score = -math.inf
-    elif mode == "min":
-        best_score = math.inf
+    if item_type == "molecule":
+        mode = getattr(config, 'boltz_mode', None) or (config.get('boltz_mode', 'max') if isinstance(config, dict) else 'max')
+    elif item_type == "nanobody":
+        mode = getattr(config, 'boltzgen_rank_mode', None) or (config.get('boltzgen_rank_mode', 'min') if isinstance(config, dict) else 'min')
+    else:
+        bt.logging.error(f"Invalid item type: {item_type}")
+        return None
 
     best_uids = []
+    best_score = -math.inf if mode == "max" else math.inf
 
     def parse_timestamp(uid):
         ts = score_dict[uid].get('push_time', '')
@@ -169,7 +105,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
             bt.logging.warning(f"Failed to parse timestamp '{ts}' for UID={uid}: {e}")
             return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
 
-    def tie_breaker(tied_uids: list[int], best_score: float, model_name: str, print_message: bool = True):
+    def tie_breaker(tied_uids: list[int], best_score: float, item_type: str, print_message: bool = True):
         # Sort by block number first, then push time, then uid to ensure deterministic result
         winner = sorted(tied_uids, key=lambda uid: (
             score_dict[uid].get('block_submitted', float('inf')), 
@@ -181,7 +117,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
         current_epoch = winner_block // 361 if winner_block else None
         push_time = score_dict[winner].get('push_time', '')
         
-        tiebreaker_message = f"Epoch {current_epoch} tiebreaker {model_name} winner: UID={winner}, score={best_score}, block={winner_block}"
+        tiebreaker_message = f"Epoch {current_epoch} {item_type} tiebreaker winner: UID={winner}, score={best_score}, block={winner_block}"
         if push_time:
             tiebreaker_message += f", push_time={push_time}"
             
@@ -192,17 +128,9 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
     
     # Find highest final score
     for uid, data in score_dict.items():
-        if model_name == "psichic": 
-            if "final_score" not in data:
-                continue
-            score = round(data['final_score'], 4)
-        elif model_name == "boltz": 
-            if "boltz_score" not in data:
-                continue
-            score = round(data['boltz_score'], 4)
-        else:
-            bt.logging.error(f"Invalid model name: {model_name}")
+        if f"final_{item_type}_score" not in data:
             continue
+        score = data[f'final_{item_type}_score']
 
         if mode == "max":
             if score > best_score:
@@ -218,7 +146,8 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
                 best_uids.append(uid)
     
     if not best_uids:
-        bt.logging.info("No valid winner found (all scores -inf or no submissions).")
+        bt.logging.debug(f"score_dict: {score_dict}")
+        bt.logging.info(f"No valid {item_type} winner found (all scores -inf/inf or no submissions).")
         return None
 
     # Treat all -inf or inf as no valid winners
@@ -230,10 +159,10 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
         if len(best_uids) == 1:
             winner_block = score_dict[best_uids[0]].get('block_submitted')
             current_epoch = winner_block // 361 if winner_block else None
-            #bt.logging.info(f"Epoch {current_epoch} PSICHIC winner: UID={best_uids_psichic[0]}, winning_score={best_score_psichic}")
+            bt.logging.info(f"Epoch {current_epoch} {item_type} winner: UID={best_uids[0]}, winning_score={best_score}")
             winner = best_uids[0]
         else:
-            winner = tie_breaker(best_uids, best_score, model_name, print_message=False)
+            winner = tie_breaker(best_uids, best_score, item_type, print_message=True)
     else:
         winner = None
     

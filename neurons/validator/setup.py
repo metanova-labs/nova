@@ -22,6 +22,8 @@ def get_config():
     
     parser.add_argument('--test_mode', action='store_true', 
                        help='Run test validator without setting weights')
+    parser.add_argument('--local_input_file', type=str, default=None, 
+                       help='Path to local input file, enables local mode (doesnt get data from chain)')
 
     config = bt.config(parser)
     config.netuid = 68

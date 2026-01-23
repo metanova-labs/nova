@@ -7,13 +7,62 @@ import hashlib
 import requests
 from ast import literal_eval
 from types import SimpleNamespace
-from typing import cast, Optional
+from typing import cast, Optional, Tuple, List
 
 import bittensor as bt
 from bittensor.core.chain_data.utils import decode_metadata
 
 MAX_RESPONSE_SIZE = 20 * 1024  # 20KB
+DELIMITER = "|" # separates between molecules and sequences
+SEPARATOR = "," # separates molecules or sequences among themselves
+NULL_TOKEN = "~" # represents an empty list
 
+def normalize_list(part: str) -> list[str]:
+    if part == NULL_TOKEN:
+        return []
+    return [x for x in part.split(SEPARATOR) if x]
+
+def parse_decrypted_submission(
+    uid: int,
+    decrypted: str,
+    num_molecules: int,
+    num_sequences: int,
+) -> Optional[Tuple[List[str], List[str]]]:
+    """
+    Expected format:
+      mol1,mol2,...|seq1,seq2,...
+    For num_molecules and num_sequences both =1, simplest is:
+      mol|seq
+    """
+    if decrypted is None:
+        return None
+
+    decrypted = decrypted.strip()
+    # hard reject whitespace
+    if any(ch.isspace() for ch in decrypted):
+        bt.logging.warning(f"UID {uid}: Decrypted submission contains whitespace (not allowed)")
+        return None
+
+    # hard reject non-ascii characters
+    if not all(ch.isascii() for ch in decrypted):
+        bt.logging.warning(f"UID {uid}: Decrypted submission contains non-ascii characters (not allowed)")
+        return None
+
+    # must contain exactly one delimiter (|)
+    if decrypted.count("|") != 1:
+        bt.logging.warning(f"UID {uid}: Expected exactly one '|' delimiter between molecules and sequences")
+        return None
+
+    # must contain both parts
+    mol_part, seq_part = decrypted.split("|", 1)
+    if not mol_part or not seq_part:
+        bt.logging.warning(f"UID {uid}: Missing molecules or sequences section")
+        return None
+
+    mols = normalize_list(mol_part)
+    seqs = normalize_list(seq_part)
+
+    return mols, seqs
 
 async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, min_block: int, max_block: int) -> dict:
     """
@@ -29,7 +78,7 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, mi
               data (commitment), and block.
     """
 
-    # Gather commitment queries for all validators (hotkeys) concurrently.
+    # Gather commitment queries for all hotkeys concurrently.
     commits = await asyncio.gather(*[
         subtensor.substrate.query(
             module="Commitments",
@@ -53,36 +102,35 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, mi
     return result
 
 
-def tuple_safe_eval(input_str: str) -> tuple:
+def tuple_safe_eval(uid: int, input_str: str) -> tuple:
     # Limit input size to prevent overly large inputs.
     if len(input_str) > MAX_RESPONSE_SIZE:
-        bt.logging.error("Input exceeds allowed size")
+        bt.logging.warning(f"UID {uid}: Input exceeds allowed size")
         return None
     
     try:
         # Safely evaluate the input string as a Python literal.
         result = literal_eval(input_str)
     except (SyntaxError, ValueError, MemoryError, RecursionError, TypeError) as e:
-        bt.logging.error(f"Input is not a valid literal: {e}")
+        bt.logging.warning(f"UID {uid}: Input is not a valid literal: {e}")
         return None
 
     # Check that the result is a tuple with exactly two elements.
     if not (isinstance(result, tuple) and len(result) == 2):
-        bt.logging.error("Expected a tuple with exactly two elements")
+        bt.logging.warning(f"UID {uid}: Expected a tuple with exactly two elements")
         return None
 
     # Verify that the first element is an int.
     if not isinstance(result[0], int):
-        bt.logging.error("First element must be an int")
+        bt.logging.warning(f"UID {uid}: First element must be an int")
         return None
     
     # Verify that the second element is a bytes object.
     if not isinstance(result[1], bytes):
-        bt.logging.error("Second element must be a bytes object")
+        bt.logging.warning(f"UID {uid}: Second element must be a bytes object")
         return None
     
     return result
-
 
 def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, config: dict) -> tuple[dict, dict]:
     """Fetch GitHub submissions and file-specific commit timestamps, then decrypt"""
@@ -114,7 +162,7 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
                     commits = resp.json() if resp.status_code == 200 else []
                     timestamp = commits[0]['commit']['committer']['date'] if commits else ''
                     if not timestamp:
-                        bt.logging.warning(f"No commit history found for https://github.com/{parts[0]}/{parts[1]}/blob/{parts[2]}/{'/'.join(parts[3:])}")
+                        bt.logging.debug(f"No commit history found for https://github.com/{parts[0]}/{parts[1]}/blob/{parts[2]}/{'/'.join(parts[3:])}")
                 except Exception as e:
                     bt.logging.warning(f"Error fetching timestamp for https://github.com/{parts[0]}/{parts[1]}: {e}")
         
@@ -124,6 +172,7 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
     push_timestamps = {}
     
     for commit in current_commitments.values():
+        uid = commit.uid        
         data = github_data.get(commit.data)
         if not data:
             continue
@@ -132,31 +181,50 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
         push_timestamps[commit.uid] = data.get('timestamp', '')
         
         if not content:
-            continue
-            
+            continue            
         try:
-            content_hash = hashlib.sha256(content.decode('utf-8').encode('utf-8')).hexdigest()[:20]
-            if commit.data.endswith(f'/{content_hash}.txt'):
-                encrypted_content = tuple_safe_eval(content.decode('utf-8', errors='replace'))
+            content_str = content.decode('utf-8', errors='replace')
+            content_hash = hashlib.sha256(content_str.encode('utf-8')).hexdigest()[:20]
+            expected_suffix = f'/{content_hash}.txt'
+            if commit.data.endswith(expected_suffix):
+                encrypted_content = tuple_safe_eval(uid, content_str)
                 if encrypted_content:
                     encrypted_submissions[commit.uid] = encrypted_content
-        except:
-            pass
-    
+        except Exception as e:
+            bt.logging.warning(f"UID {uid}: Exception during content processing: {e}", exc_info=True)
+
     # Decrypt all submissions
     try:
-        decrypted_submissions = btd.decrypt_dict(encrypted_submissions)
-        decrypted_submissions = {k: v.split(',') for k, v in decrypted_submissions.items() if v is not None}
-        # Ensure each UID has the correct number of molecules
-        decrypted_submissions = {k: v for k, v in decrypted_submissions.items() if len(v) == config['num_molecules']}
+        decrypted_raw = btd.decrypt_dict(encrypted_submissions)
+
+        # parse into (molecules, sequences)
+        parsed = {}
+        for uid, payload in decrypted_raw.items():
+            if payload is None:
+                bt.logging.warning(f"UID {uid}: Decryption returned None payload")
+                continue
+            
+            parsed_pair = parse_decrypted_submission(
+                uid,
+                payload,
+                num_molecules=config["num_molecules"],
+                num_sequences=config["num_sequences"],
+            )
+            if parsed_pair is None:
+                continue
+            mols, seqs = parsed_pair
+            parsed[uid] = {"molecules": mols, "sequences": seqs}
+
+        decrypted_submissions = parsed
+
     except Exception as e:
-        bt.logging.error(f"Failed to decrypt submissions: {e}")
+        bt.logging.error(f"Failed to decrypt submissions: {e}", exc_info=True)
         decrypted_submissions = {}
-    
+
     bt.logging.info(f"GitHub: {len(file_paths)} paths → {len(decrypted_submissions)} decrypted")
     return decrypted_submissions, push_timestamps
 
-async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_block, current_block, no_submission_blocks, github_headers, btd):
+async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_block, current_block, config, github_headers, btd):
     # Get commitments
     current_block_hash = await subtensor.determine_block_hash(current_block)
     current_commitments = await get_commitments(
@@ -165,27 +233,28 @@ async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_blo
         current_block_hash, 
         netuid=netuid,
         min_block=start_block,
-        max_block=current_block - no_submission_blocks
+        max_block=current_block - config.no_submission_blocks
     )
     bt.logging.debug(f"Current epoch commitments: {len(current_commitments)}")
 
     # Decrypt submissions
     decrypted_submissions, push_timestamps = decrypt_submissions(
-        current_commitments, github_headers, btd, {"num_molecules": 1}  # Default config
+        current_commitments, github_headers, btd, config
     )
+    bt.logging.debug(f"Decrypted submissions: {decrypted_submissions}")
 
     # Prepare structured data
     uid_to_data = {}
     for hotkey, commit in current_commitments.items():
         uid = commit.uid
-        molecules = decrypted_submissions.get(uid)
-        if molecules is not None:
+        submission = decrypted_submissions.get(uid)
+
+        if submission is not None:
             uid_to_data[uid] = {
-                "molecules": molecules,
+                "molecules": submission["molecules"],
+                "sequences": submission["sequences"],
                 "block_submitted": commit.block,
                 "push_time": push_timestamps.get(uid, '')
             }
-        else:
-            bt.logging.error(f"No decrypted submission found for UID: {uid}")
 
     return uid_to_data, current_commitments, decrypted_submissions, push_timestamps

@@ -4,7 +4,6 @@ import json
 import aiohttp
 import bittensor as bt
 
-from utils import calculate_dynamic_entropy
 
 
 def _safe_num(x: float) -> float:
@@ -42,7 +41,7 @@ def _build_competition_payload(config, current_epoch: int, target_proteins: list
             # Boltz config
             "boltz_weight": getattr(config, 'boltz_weight', None),
             "num_molecules_boltz": getattr(config, 'num_molecules_boltz', None),
-            "boltz_metric": getattr(config, 'boltz_metric', None),
+            "boltz_metric": getattr(config, 'combination_strategy', None),
         },
     }
 
