@@ -1,0 +1,24 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 1..5C6C1..5
+  - file:
+      path: 1mk5.cif
+       
+      include: 
+        - chain:
+            id: A
+
+      structure_groups:
+        - group:
+            id: A
+            visibility: 1
+        - group:
+            id: A
+            visibility: 0
+            res_index: 32..42
+
+constraints:
+  - bond:
+      atom1: [C, 2, SG] 
+      atom2: [C, 9, SG]

@@ -1,0 +1,20 @@
+entities:
+  # Specify a designed protein chain 
+  # random number between 40 and 80 of designed residues (inclusive)
+  - protein:
+      id: G
+      sequence: 40..80
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: nup98.cif
+      # Which chain and residues in the .cif file to use as target (uses only A: 1..400 here)
+      include:
+        - chain:
+            id: A
+            res_index: 1..400
+      # Which regions of the target should have their structure specified
+      # Here we hide the entire included target fragment (no coordinates specified)
+      structure_groups:
+        - group:
+            visibility: 0
+            id: "all"

@@ -1,0 +1,49 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 8..18
+  - file:
+      path: 1mk5.cif
+      use_assembly: true
+
+       
+      include: 
+        - chain:
+            id: A1
+        - chain:
+            id: B1
+        - chain:
+            id: A2
+        - chain:
+            id: B2
+
+      structure_groups:
+        - group:
+            id: A1
+            visibility: 1
+        - group:
+            id: B1
+            visibility: 1
+        - group:
+            id: A1
+            visibility: 0
+            res_index: 32..42
+        - group:
+            id: B1
+            visibility: 0
+            res_index: 32..42
+        - group:
+            id: A2
+            visibility: 1
+        - group:
+            id: B2
+            visibility: 1
+        - group:
+            id: A2
+            visibility: 0
+            res_index: 32..42
+        - group:
+            id: B2
+            visibility: 0
+            res_index: 32..42
+

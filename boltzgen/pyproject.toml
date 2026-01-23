@@ -1,0 +1,129 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# [build-system]
+# requires = ["setuptools>=68", "setuptools_scm[toml]>=8"]
+# build-backend = "setuptools.build_meta"
+
+[project]
+name = "boltzgen"
+requires-python = ">=3.11"
+version = "0.2.0"
+readme = { file = "PYPI_DESCRIPTION.md", content-type = "text/markdown" }
+description = "Protein design"
+dependencies = [
+    # Add runtime dependencies here
+    "numpy==2.0.2",
+    "numba==0.61.0",
+    "matplotlib",
+    "hydride",
+    "biotite",
+    "pydssp",
+    "logomaker",
+    "gemmi==0.6.5",
+    "torch>=2.4.1",
+    "scikit-learn",
+    "hydra-core",
+    "edit_distance",
+    "pytorch-lightning",
+    "rdkit",
+    "pandas",
+    "pdbeccdutils",
+    "einx",
+    "einops",
+    "mashumaro",
+    "nvidia-ml-py>=12.535.133",
+    "cuequivariance_ops_cu12>=0.5.0",
+    "cuequivariance_ops_torch_cu12>=0.5.0",
+    "cuequivariance_torch>=0.5.0",
+    "huggingface_hub",
+    "biopython", 
+]
+
+# Enables the usage of setuptools_scm
+# [tool.setuptools_scm]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+boltzgen = ["resources/config/**/*"]
+
+[project.scripts]
+boltzgen = "boltzgen.cli.boltzgen:main"
+
+[project.optional-dependencies]
+lint = ["ruff"]
+test = ["pytest"]
+doc = []
+build = []
+dev = [
+    "redis",
+    "wandb",
+    "requests",
+    "types-requests==2.32.4.*",
+    "boltzgen[lint]",
+    "boltzgen[test]",
+    "boltzgen[doc]",
+    "boltzgen[build]",
+]
+
+[tool.ruff]
+src = ["src"]
+extend-exclude = ["conf.py"]
+target-version = "py38"
+lint.select = ["ALL"]
+lint.ignore = [
+    "COM812",  # Conflicts with the formatter
+    "ISC001",  # Conflicts with the formatter
+    "ANN101",  # "missing-type-self"
+    "RET504",  # Unnecessary assignment to `x` before `return` statementRuff
+    "S101",    # Use of `assert` detected
+    "D100",    # Missing docstring in public module
+    "D104",    # Missing docstring in public package
+    "PT001",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "PT004",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "PT005",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "PT023",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "FBT001",
+    "FBT002",
+    "PLR0913", # Too many arguments to init (> 5)
+    "TRY003",  # Exception messages
+    "EM101",   # Exception messages
+    "FA102",   # typing
+    "T201",    # Print statements
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101", # Use of `assert` detected
+    "D103", # Missing docstring in public function
+]
+"**/__init__.py" = [
+    "F401", # Imported but unused
+    "F403", # Wildcard imports
+]
+"docs/**" = [
+    "INP001", # Requires __init__.py but folder is not a package.
+]
+"scripts/**" = [
+    "INP001", # Requires __init__.py but folder is not a package.
+]
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`(https://github.com/astral-sh/ruff/issues/5434)
+keep-runtime-typing = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.mypy]
+# Functions need to be annotated
+disallow_untyped_defs = true
+warn_unused_ignores = true
+exclude = ["configs/", "build/", "dist/", "docs/", "tests/"]

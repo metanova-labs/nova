@@ -1,0 +1,31 @@
+entities:
+  - protein: 
+      id: G
+      sequence: 3..7C6C3..7 
+  - ligand:
+      id: F
+      ccd: WHL
+  - file:
+      path: 1mk5.cif
+       
+      include: 
+        - chain:
+            id: A
+
+      structure_groups:
+        - group:
+            id: A
+            visibility: 1
+        - group:
+            id: A
+            visibility: 0
+            res_index: 32..42
+
+
+constraints:
+  - bond:
+      atom1: [G, 4, SG] # specify connection as if the minimum possible 
+      atom2: [F, 1, CK]
+  - bond:
+      atom1: [G, 11, SG]
+      atom2: [F, 1, CH]

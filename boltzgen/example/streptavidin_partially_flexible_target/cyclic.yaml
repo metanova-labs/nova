@@ -1,0 +1,22 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 8..18
+      cyclic: true
+  - file:
+      path: 1mk5.cif
+       
+      include: 
+        - chain:
+            id: A
+
+      structure_groups:
+        - group:
+            id: A
+            visibility: 1
+        - group:
+            id: A
+            visibility: 0
+            res_index: 32..42
+
+

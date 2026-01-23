@@ -1,0 +1,184 @@
+entities:
+  - protein: 
+      id: G
+      sequence: 15..20AAAAAAVTTTT18PPP # range between 15 and 20 inclusive on both sides
+  - protein: 
+      id: R
+      sequence: 3..5C6C3 # Random number of design residues between 3 and 5, then a Cystein, then 6 design residues, then ...
+  - ligand:
+      id: Q
+      ccd: WHL
+  - protein:
+      id: H
+      sequence: 17
+      secondary_structure: # No secondary structure specified, defaults 
+  - file:
+      path: 7rpz.cif
+       
+      include: 
+        - chain:
+            id: A
+        - chain:
+            id: B
+
+      include_proximity:
+        - chain: 
+            id: A
+            res_index: 10..16
+            radius: 35
+
+      binding_types:
+        - chain:
+            id: A
+            binding: 5..7,13
+        - chain:
+            id: B
+            not_binding: "all" 
+          
+
+
+      structure_groups:
+        - group:
+            visibility: 1
+            id: A
+            res_index: 10..16
+        - group:
+            visibility: 2
+            id: B
+        - group:
+            visibility: 0
+            id: A
+            res_index: 13
+
+      design:
+        - chain:
+            id: A
+            res_index: ..4,20..27
+
+      secondary_structure:
+        - chain:
+            id: A
+            loop: 1
+            helix: 2..3
+            sheet: 4
+        
+      design_insertions:
+        - insertion:
+            id: A
+            res_index: 20 # The 20th residue will be a designed one (starting to count from 1)
+            num_residues: 2..9
+            secondary_structure: HELIX # One of UNSPECIFIED (default), LOOP, HELIX, SHEET. 
+
+  - protein: 
+      id: A
+      sequence: AAAAAAAAAAAAAAAAAAAAAAAA
+      binding_types: uuuuBBBuNNNuBuu # the missing specifications will be 'u' by default
+  - file:
+      path: 7rpz.cif
+      fuse: A
+      include: 
+        - chain:
+            id: A
+            res_index: ..5
+            
+  - protein:
+      id: B
+      sequence: AAAAAAAAAAAAAAAAAAAAAAAA
+      binding_types:
+        binding: 5..7,13
+        not_binding: 9..11
+  - ligand:
+      id: [C, D]
+      ccd: SAH
+  - ligand:
+      id: [E, F]
+      smiles: 'N[C@@H](Cc1ccc(O)cc1)C(=O)O'
+      binding_types: B
+
+
+  - file:
+      path: 7rpz.cif
+      include: "all"
+      exclude: 
+        - chain:
+            id: A
+            res_index: ..5
+
+      structure_groups:
+        - group:
+            visibility: 1
+            id: "all"
+
+        - group:
+            visibility: 0
+            id: A
+            res_index: 10..16
+  - file:
+      path: 8r3a.cif
+       
+      include: 
+        - chain:
+            id: A
+        - chain:
+            id: B
+
+      binding_types:
+        - chain:
+            id: A
+            binding: 5..7,13
+        - chain:
+            id: B
+            not_binding: "all" 
+          
+
+
+      structure_groups:
+        - group:
+            visibility: 1
+            id: A
+            res_index: 10..13
+        - group:
+            visibility: 2
+            id: B
+        - group:
+            visibility: 0
+            id: A
+            res_index: 13
+
+      design:
+        - chain:
+            id: A
+            res_index: 14..19
+
+      secondary_structure:
+        - chain:
+            id: A
+            loop: 14
+            helix: 15..17
+            sheet: 19
+  - protein:
+      id: S
+      sequence: 10C6C3
+  - protein:
+      id: T
+      sequence: C10C6C3C
+      cyclic: true
+
+constraints:
+    # specify connections as if the minimum possible number of residues was sampled
+  - bond:
+      atom1: [R, 4, SG] # connection for a helical peptides with WHL staple 
+      atom2: [Q, 1, CK]
+  - bond:
+      atom1: [R, 11, SG]
+      atom2: [Q, 1, CH]
+  - bond:
+      atom1: [S, 11, SG] # connection for a disulfide bond
+      atom2: [S, 18, SG]
+  - bond:
+      atom1: [T, 12, SG]
+      atom2: [T, 19, SG]
+
+  - total_len:
+      min: 10
+      max: 20

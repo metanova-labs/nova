@@ -1,0 +1,15 @@
+entities:
+  - file:
+      path: 1g13.cif
+       
+      include: 
+          - chain:
+              id: A
+  - file:
+      path: 
+        - ../nanobody_scaffolds/7eow.yaml
+        - ../nanobody_scaffolds/7xl0.yaml
+        - ../nanobody_scaffolds/8coh.yaml
+        - ../nanobody_scaffolds/8z8v.yaml
+
+

@@ -1,0 +1,11 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 80..140
+  - file:
+      path: 2a1x.cif
+       
+      include: 
+        - chain:
+            id: A
+

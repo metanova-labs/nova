@@ -1,0 +1,40 @@
+entities:
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: zf.cif
+      # Which parts of the .cif file to include as target (here includes all chains/residues)
+      include: "all" 
+      # Which parts of the included content to exclude (here excludes residues 10, 63..69, and 185.. in chain A1)
+      exclude:
+        - chain:
+            id: A1
+            res_index: ..10,63..69,185..
+      # Where to insert new designable residues into existing chains
+      # Here we insert 3..8 residues after residue 63 in chain A1
+      design_insertions:
+        - insertion:
+            id: A1
+            res_index: 63 
+            num_residues: 3..8
+      # Which regions of the target should have their structure specified
+      # Here we hide everything (no structure specified)
+      structure_groups:
+        - group:
+            visibility: 0
+            id: "all"
+      # Which residues in the target should be redesigned
+      # Here we declare A1:11..184 to be redesigned
+      design:
+        - chain:
+            id: A1
+            res_index: 11..184
+      # Which residues in the target are explicitly not redesignable (override entries in design)
+      # Here we carve out fixed positions on chain A1 to not be redesigned
+      not_design:
+        - chain:
+            id: A1
+            res_index: 11..20,29,33,39..48,57,61,72..81,90,94,100..109,118,122,129..138,147,151,157..166,175,179
+      # Reset residue numbering to be contiguous for chain A1
+      reset_res_index:
+        - chain:
+            id: A1

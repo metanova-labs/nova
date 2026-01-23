@@ -1,0 +1,16 @@
+entities:
+  - file:
+      path: 1brs.cif
+
+      # Include target and binder
+      include: 
+        - chain:
+            id: A
+        - chain: 
+            id: D
+
+      # Redesign specified binder residues
+      design:
+        - chain:
+            id: D
+            res_index: 33..46

@@ -1,0 +1,28 @@
+entities:
+  # Specify a designed protein chain 
+  - protein:
+      id: G
+      # random number between 40 and 80 of designed residues (inclusive)
+      sequence: 40..80
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: npm1.cif
+      # Which chain and residues in the .cif file to use as target (uses only chain A here)
+      include:
+        - chain:
+            id: A
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify that the design should bind to residues 123..240 on chain Aand not bind to residues 1..122 on chain A
+      binding_types:
+        - chain:
+            id: A
+            binding: 123..240
+            not_binding: 1..122
+      # Which regions of the target should have their structure specified
+      # Here we keep structure specified (visible) for two disjoint segments of chain A
+      structure_groups:
+        - group:
+            visibility: 1
+            id: A
+            res_index: 12..118, 243..291
+        

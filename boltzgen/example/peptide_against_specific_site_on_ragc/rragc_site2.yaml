@@ -1,0 +1,16 @@
+entities:
+  - protein: 
+      id: P
+      sequence: 10..22
+  - file:
+      path: 6wj3.cif
+       
+      include: 
+        - chain:
+            id: G
+
+      binding_types:
+        - chain:
+            id: G
+            binding: 232,236,239,278,279,280,281,282,283,284,285,286,240,245,246,249,250,253,254,256,257,261,262
+          

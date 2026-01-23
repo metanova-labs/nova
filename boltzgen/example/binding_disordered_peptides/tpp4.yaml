@@ -1,0 +1,11 @@
+entities:
+  # Specify a designed protein chain 
+  # random number between 120 and 140 of designed residues (inclusive)
+  - protein:
+      id: A
+      sequence: 120..140
+  # Specify a non-designed protein chain
+  # fixed 20-mer, all residues fixed
+  - protein:
+      id: B
+      sequence: GGGILPWKWPWWPWRRGGG

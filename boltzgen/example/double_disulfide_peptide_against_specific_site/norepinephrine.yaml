@@ -1,0 +1,29 @@
+entities:
+  # Specify a designed protein chain
+  # 1..3 design residues, Cystein, Cystein, 4 design residues, Cystein, 1..3 design residues, Cystein, 1..3 design residues
+  - protein:
+      id: B
+      sequence: 1..3CC4C1..3C1..3
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: 8wtw.cif
+      # Which chain and residues in the .cif file to use as target (here includes all residues on chain A)
+      include: 
+        - chain:
+            id: A
+
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify that the design should bind to residue 24 on chain A
+      binding_types:
+        - chain:
+            id: A
+            binding: 24
+          
+constraints:
+  # Specify covalent disulfide bonds between the designed residues on chain B 
+  - bond:
+      atom1: [B, 2, SG]  # connect SG of residue 2 to SG of residue 10 on chain B 
+      atom2: [B, 10, SG]
+  - bond:
+      atom1: [B, 3, SG]  # connect SG of residue 3 to SG of residue 8 on chain B
+      atom2: [B, 8, SG]

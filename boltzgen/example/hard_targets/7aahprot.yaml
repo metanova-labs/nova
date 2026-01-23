@@ -1,0 +1,12 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 80..140
+  - file:
+      path: 7aah.cif
+       
+      include: 
+        - chain:
+            id: A
+
+

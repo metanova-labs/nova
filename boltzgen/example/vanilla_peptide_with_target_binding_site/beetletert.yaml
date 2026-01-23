@@ -1,0 +1,24 @@
+entities:
+  # Specify a designed protein chain
+  # random number between 12 and 20 of designed residues (inclusive)
+  - protein: 
+      id: G
+      sequence: 12..20
+
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: 5cqg.cif
+      # Which chain and residues in the .cif file to use as target (uses only chain A here)
+      include:
+        - chain:
+            id: A
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify that the design should bind to residues 343, 344, and 251 on chain A
+      binding_types:
+        - chain:
+            id: A
+            binding: 343,344,251
+      # Which regions of the target should have their structure specified
+      # Here we specify that all included target residues should have their structure specified
+      structure_groups: "all"
+

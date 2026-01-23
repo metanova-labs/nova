@@ -1,0 +1,16 @@
+entities:
+  # Specify a designed protein chain
+  # random number between 40 and 120 of designed residues (inclusive)
+  - protein: 
+      id: G
+      sequence: 40..120
+
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: zf.cif
+      include: 
+        # Which chain and residues in the .cif file to use as target (here includes all residues on chains C1 and B1)
+        - chain:
+            id: C1
+        - chain:
+            id: B1
