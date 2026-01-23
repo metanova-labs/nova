@@ -15,11 +15,8 @@ from types import SimpleNamespace
 
 from dotenv import load_dotenv
 import bittensor as bt
-from bittensor.core.chain_data.utils import decode_metadata
 from bittensor.core.errors import MetadataError
 from substrateinterface import SubstrateInterface
-from datasets import load_dataset
-from huggingface_hub import list_repo_files
 import pandas as pd
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -32,8 +29,8 @@ from utils import (
     get_challenge_params_from_blockhash,
     get_heavy_atom_count,
     compute_maccs_entropy,
+
 )
-from PSICHIC.wrapper import PsichicWrapper
 from btdr import QuicknetBittensorDrandTimelock
 
 # ----------------------------------------------------------------------------
@@ -175,160 +172,21 @@ async def setup_bittensor_objects(config: argparse.Namespace) -> Tuple[Any, Any,
         raise
 
 # ----------------------------------------------------------------------------
-# 4. DATA SETUP
+# 4. ADD YOUR OWN CODE FOR MINING
 # ----------------------------------------------------------------------------
 
-def stream_random_chunk_from_dataset(dataset_repo: str, chunk_size: int) -> Any:
+def dummy_get_candidate_products() -> Tuple[str, str]:
     """
-    Streams a random chunk from the specified Hugging Face dataset repo.
-
-    Args:
-        dataset_repo (str): Hugging Face dataset repository path (user/repo).
-        chunk_size (int): Size of each chunk to stream.
-
-    Returns:
-        Any: A batched (chunked) dataset iterator.
+    Returns a dummy candidate small molecule and nanobody.
+    If n>1, items should be separated by ',' e.g. 'rxn:3:49485:2099:70633,rxn:3:49485:2099:70634'
     """
-    files = list_repo_files(dataset_repo, repo_type='dataset')
-    files = [file for file in files if file.endswith('.csv')]
-    random_file = random.choice(files)
-
-    dataset_dict = load_dataset(
-        dataset_repo,
-        data_files={'train': random_file},
-        streaming=True,
-    )
-    dataset = dataset_dict['train']
-    batched = dataset.batch(chunk_size)
-    return batched
-
+    candidate_small_molecules = 'rxn:3:49485:2099:70633'
+    candidate_nanobodies = 'QVQLQESGGGLVQAGGSLRLSGVASRRTFCNYLDAMGWLSLVTGKERELVAHITGNRGDVMYLDSVKAGSTISRVKTNSTVYLQMNSMKPEDTHVYYWAPKATGFFSPKEEEKYNWWGQGTQVTVSS'
+    return candidate_small_molecules, candidate_nanobodies
 
 # ----------------------------------------------------------------------------
-# 5. INFERENCE AND SUBMISSION LOGIC
+# 5. RESPONSE SUBMISSION LOGIC
 # ----------------------------------------------------------------------------
-
-async def run_psichic_model_loop(state: Dict[str, Any]) -> None:
-    """
-    Continuously runs the PSICHIC model on batches of molecules from Hugging Face dataset.
-    Updates the best candidate whenever a higher score is found, but only submits when close to epoch end.
-
-    Args:
-        state (dict): A shared state dict containing references to:
-            'chunk_size', 'hugging_face_dataset_repo', 'psichic_models', 'current_challenge_targets',
-            'current_challenge_antitargets', 'psichic_result_column_name', 'best_score',
-            'candidate_product', 'submission_interval', 'last_submission_time',
-            'last_submitted_product', 'shutdown_event', etc.
-    """
-    bt.logging.info("Starting PSICHIC model inference loop.")
-    dataset_iter = stream_random_chunk_from_dataset(
-        dataset_repo=state['hugging_face_dataset_repo'],
-        chunk_size=state['chunk_size']
-    )
-
-    while not state['shutdown_event'].is_set():
-        try:
-            for chunk in dataset_iter:
-                if state['shutdown_event'].is_set():
-                    break
-
-                df = pd.DataFrame.from_dict(chunk)
-                # Clean data
-                df['product_name'] = df['product_name'].apply(lambda x: x.replace('"', ''))
-                df['product_smiles'] = df['product_smiles'].apply(lambda x: x.replace('"', ''))
-
-                # Filter by min_heavy_atoms
-                df['heavy_atoms'] = df['product_smiles'].apply(lambda x: get_heavy_atom_count(x))
-                df = df[df['heavy_atoms'] >= state['config'].min_heavy_atoms]
-                if df.empty or len(df) < state['config'].num_molecules:
-                    continue
-
-                # Run inference for all targets and antitargets
-                target_scores = []
-                antitarget_scores = []
-
-                # Score against all target proteins
-                for target_protein in state['current_challenge_targets']:
-                    if target_protein not in state['psichic_models']:
-                        try:
-                            target_sequence = get_sequence_from_protein_code(target_protein)
-                            model = PsichicWrapper()
-                            model.run_challenge_start(target_sequence)
-                            state['psichic_models'][target_protein] = model
-                            bt.logging.info(f"Initialized model for target: {target_protein}")
-                        except Exception as e:
-                            bt.logging.error(f"Error initializing model for target {target_protein}: {e}")
-                            continue
-
-                    scores = state['psichic_models'][target_protein].run_validation(df['product_smiles'].tolist())
-                    target_scores.append(scores[state['psichic_result_column_name']])
-
-                # Score against all antitarget proteins
-                for antitarget_protein in state['current_challenge_antitargets']:
-                    if antitarget_protein not in state['psichic_models']:
-                        try:
-                            antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
-                            model = PsichicWrapper()
-                            model.run_challenge_start(antitarget_sequence)
-                            state['psichic_models'][antitarget_protein] = model
-                            bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
-                        except Exception as e:
-                            bt.logging.error(f"Error initializing model for antitarget {antitarget_protein}: {e}")
-                            continue
-
-                    scores = state['psichic_models'][antitarget_protein].run_validation(df['product_smiles'].tolist())
-                    antitarget_scores.append(scores[state['psichic_result_column_name']])
-
-                # Calculate average scores
-                df['target_affinity'] = pd.DataFrame(target_scores).mean(axis=0)
-                df['antitarget_affinity'] = pd.DataFrame(antitarget_scores).mean(axis=0)
-                df['combined_score'] = df['target_affinity'] - state['config'].antitarget_weight * df['antitarget_affinity']
-
-                # Sort by combined score
-                df.sort_values(by=['combined_score'], ascending=[False], inplace=True)
-                df.reset_index(drop=True, inplace=True)
-
-                # Select top 10 molecules
-                top_molecules = df.iloc[:10]
-                if not top_molecules.empty:
-                    entropy = compute_maccs_entropy(top_molecules['product_smiles'].tolist())
-                    scores_sum = top_molecules['combined_score'].sum()
-                    
-                    if scores_sum > state['config'].entropy_bonus_threshold:
-                        final_score = scores_sum * (state['config'].entropy_weight + entropy)
-                    else:
-                        final_score = scores_sum
-
-                    if final_score > state['best_score']:
-                        state['best_score'] = final_score
-                        state['candidate_product'] = ','.join(top_molecules['product_name'].tolist())
-                        bt.logging.info(f"New best score: {state['best_score']}, Candidates: {state['candidate_product']}")
-
-                    # Only submit if we're close to epoch end (20 blocks away)
-                    # Check if we're close to epoch end (20 blocks away)
-                    current_block = await state['subtensor'].get_current_block()
-                    next_epoch_block = ((current_block // state['epoch_length']) + 1) * state['epoch_length']
-                    blocks_until_epoch = next_epoch_block - current_block
-                    
-                    bt.logging.debug(f"Current block: {current_block}, Epoch length: {state['epoch_length']}, Next epoch block: {next_epoch_block}, Blocks until epoch: {blocks_until_epoch}")
-                    
-                    if state['candidate_product'] and blocks_until_epoch <= 20:
-                        bt.logging.info(f"Close to epoch end ({blocks_until_epoch} blocks remaining), attempting submission...")
-                        if state['candidate_product'] != state['last_submitted_product']:
-                            bt.logging.info("Attempting to submit new candidate...")
-                            try:
-                                await submit_response(state)
-                            except Exception as e:
-                                bt.logging.error(f"Error submitting response: {e}")
-                        else:
-                            bt.logging.info("Skipping submission - same product as last submission")
-
-                await asyncio.sleep(2)
-
-        except Exception as e:
-            bt.logging.error(f"Error in PSICHIC model loop: {e}")
-            traceback.print_exc()
-            state['shutdown_event'].set()
-
 
 async def submit_response(state: Dict[str, Any]) -> None:
     """
@@ -340,16 +198,18 @@ async def submit_response(state: Dict[str, Any]) -> None:
             'bdt', 'miner_uid', 'candidate_product', 'subtensor', 'wallet', 'config',
             'github_path', etc.
     """
-    candidate_product = state['candidate_product']
-    if not candidate_product:
-        bt.logging.warning("No candidate product to submit")
+    candidate_small_molecules = state['candidate_small_molecules']
+    candidate_nanobodies = state['candidate_nanobodies']
+    if not candidate_small_molecules or not candidate_nanobodies:
+        bt.logging.warning("No candidate small molecules or nanobodies to submit")
         return
 
-    bt.logging.info(f"Starting submission process for product: {candidate_product}")
+    bt.logging.info(f"Starting submission process for small molecules: {candidate_small_molecules} and nanobodies: {candidate_nanobodies}")
     
     # 1) Encrypt the response
+    message = f"{candidate_small_molecules}|{candidate_nanobodies}"
     current_block = await state['subtensor'].get_current_block()
-    encrypted_response = state['bdt'].encrypt(state['miner_uid'], candidate_product, current_block)
+    encrypted_response = state['bdt'].encrypt(state['miner_uid'], message, current_block)
     bt.logging.info(f"Encrypted response generated successfully")
 
     # 2) Create temp file, write content
@@ -389,8 +249,6 @@ async def submit_response(state: Dict[str, Any]) -> None:
                 github_status = upload_file_to_github(filename, encoded_content)
                 if github_status:
                     bt.logging.info(f"File uploaded successfully to {commit_content}")
-                    state['last_submitted_product'] = candidate_product
-                    state['last_submission_time'] = datetime.datetime.now()
                 else:
                     bt.logging.error(f"Failed to upload file to GitHub for {commit_content}")
             except Exception as e:
@@ -421,9 +279,6 @@ async def run_miner(config: argparse.Namespace) -> None:
     state: Dict[str, Any] = {
         # environment / config
         'config': config,
-        'hugging_face_dataset_repo': 'Metanova/SAVI-2020',
-        'psichic_result_column_name': 'predicted_binding_affinity',
-        'chunk_size': 128,
         'submission_interval': 1200,
 
         # GitHub
@@ -436,22 +291,12 @@ async def run_miner(config: argparse.Namespace) -> None:
         'miner_uid': miner_uid,
         'epoch_length': epoch_length,
 
-        # Models - one instance per protein
-        'psichic_models': {},  # Dictionary mapping protein codes to their PSICHIC instances
+        # Bittensor Drand Timelock objects
         'bdt': QuicknetBittensorDrandTimelock(),
 
         # Inference state
-        'candidate_product': None,
-        'best_score': float('-inf'),
-        'last_submitted_product': None,
-        'last_submission_time': None,
-        'shutdown_event': asyncio.Event(),
-
-        # Challenges
-        'current_challenge_targets': [],
-        'last_challenge_targets': [],
-        'current_challenge_antitargets': [],
-        'last_challenge_antitargets': [],
+        'candidate_small_molecules': None,
+        'candidate_nanobodies': None,  
     }
 
     bt.logging.info("Entering main miner loop...")
@@ -465,71 +310,27 @@ async def run_miner(config: argparse.Namespace) -> None:
     if next_boundary - current_block < 20:
         bt.logging.info(f"Too close to epoch end, waiting for next epoch to start...")
         block_to_check = next_boundary
-        await asyncio.sleep(12*10)
+        await asyncio.sleep(12*(next_boundary - current_block))
     else:
         block_to_check = last_boundary
 
     block_hash = await subtensor.determine_block_hash(block_to_check)
-    startup_proteins = get_challenge_params_from_blockhash(
+    challenge_params = get_challenge_params_from_blockhash(
         block_hash=block_hash,
-        weekly_target=config.weekly_target,
-        num_antitargets=config.num_antitargets
+        small_molecule_target=config.small_molecule_target,
+        nanobody_target=config.nanobody_target,
+        include_reaction=config.random_valid_reaction
     )
+    bt.logging.info(f"Challenge params: {challenge_params}")
 
-    if startup_proteins:
-        state['current_challenge_targets'] = startup_proteins["targets"]
-        state['last_challenge_targets'] = startup_proteins["targets"]
-        state['current_challenge_antitargets'] = startup_proteins["antitargets"]
-        state['last_challenge_antitargets'] = startup_proteins["antitargets"]
-        bt.logging.info(f"Startup targets: {startup_proteins['targets']}, antitargets: {startup_proteins['antitargets']}")
+    # Update state with your results and other relevant info here
+    candidate_small_molecules, candidate_nanobodies = dummy_get_candidate_products()
+    state['candidate_small_molecules'] = candidate_small_molecules
+    state['candidate_nanobodies'] = candidate_nanobodies
 
-        # Initialize models for all proteins
-        try:
-            for target_protein in startup_proteins["targets"]:
-                target_sequence = get_sequence_from_protein_code(target_protein)
-                model = PsichicWrapper()
-                model.run_challenge_start(target_sequence)
-                state['psichic_models'][target_protein] = model
-                bt.logging.info(f"Initialized model for target: {target_protein}")
-
-            for antitarget_protein in startup_proteins["antitargets"]:
-                antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
-                model = PsichicWrapper()
-                model.run_challenge_start(antitarget_sequence)
-                state['psichic_models'][antitarget_protein] = model
-                bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
-        except Exception as e:
-            try:
-                os.system(
-                    f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} "
-                    f"https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
-                )
-                # Retry initialization after download
-                for target_protein in state['current_challenge_targets']:
-                    if target_protein not in state['psichic_models']:
-                        target_sequence = get_sequence_from_protein_code(target_protein)
-                        model = PsichicWrapper()
-                        model.run_challenge_start(target_sequence)
-                        state['psichic_models'][target_protein] = model
-                        bt.logging.info(f"Initialized model for target: {target_protein}")
-
-                for antitarget_protein in state['current_challenge_antitargets']:
-                    if antitarget_protein not in state['psichic_models']:
-                        antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
-                        model = PsichicWrapper()
-                        model.run_challenge_start(antitarget_sequence)
-                        state['psichic_models'][antitarget_protein] = model
-                        bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
-                bt.logging.info("Models re-downloaded and initialized successfully.")
-            except Exception as e2:
-                bt.logging.error(f"Error initializing models after re-download attempt: {e2}")
-
-        # 4) Launch the inference loop
-        try:
-            state['inference_task'] = asyncio.create_task(run_psichic_model_loop(state))
-            bt.logging.debug("Inference started on startup proteins.")
-        except Exception as e:
-            bt.logging.error(f"Error starting inference: {e}")
+    # Submit response
+    await submit_response(state)
+    return None
 
     # 5) Main epoch-based loop
     while True:
@@ -542,83 +343,23 @@ async def run_miner(config: argparse.Namespace) -> None:
                 
                 block_hash = await subtensor.determine_block_hash(current_block)
                 
-                new_proteins = get_challenge_params_from_blockhash(
+                challenge_params = get_challenge_params_from_blockhash(
                     block_hash=block_hash,
-                    weekly_target=config.weekly_target,
-                    num_antitargets=config.num_antitargets
+                    small_molecule_target=config.small_molecule_target,
+                    nanobody_target=config.nanobody_target,
+                    include_reaction=config.random_valid_reaction
                 )
-                if (new_proteins and 
-                    (new_proteins["targets"] != state['last_challenge_targets'] or 
-                     new_proteins["antitargets"] != state['last_challenge_antitargets'])):
-                    state['current_challenge_targets'] = new_proteins["targets"]
-                    state['last_challenge_targets'] = new_proteins["targets"]
-                    state['current_challenge_antitargets'] = new_proteins["antitargets"]
-                    state['last_challenge_antitargets'] = new_proteins["antitargets"]
-                    bt.logging.info(f"New proteins - targets: {new_proteins['targets']}, antitargets: {new_proteins['antitargets']}")
 
-                # Cancel old inference, reset relevant state
-                if 'inference_task' in state and state['inference_task']:
-                    if not state['inference_task'].done():
-                        state['shutdown_event'].set()
-                        bt.logging.debug("Shutdown event set for old inference task.")
-                        await state['inference_task']
-
-                # Reset best score and candidate
-                state['candidate_product'] = None
-                state['best_score'] = float('-inf')
-                state['last_submitted_product'] = None
-                state['shutdown_event'] = asyncio.Event()
-
-                # Initialize models for new proteins
-                try:
-                    for target_protein in state['current_challenge_targets']:
-                        if target_protein not in state['psichic_models']:
-                            target_sequence = get_sequence_from_protein_code(target_protein)
-                            model = PsichicWrapper()
-                            model.run_challenge_start(target_sequence)
-                            state['psichic_models'][target_protein] = model
-                            bt.logging.info(f"Initialized model for target: {target_protein}")
-
-                    for antitarget_protein in state['current_challenge_antitargets']:
-                        if antitarget_protein not in state['psichic_models']:
-                            antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
-                            model = PsichicWrapper()
-                            model.run_challenge_start(antitarget_sequence)
-                            state['psichic_models'][antitarget_protein] = model
-                            bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
-                except Exception as e:
-                    try:
-                        os.system(
-                            f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} "
-                            f"https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
-                        )
-                        # Retry initialization after download
-                        for target_protein in state['current_challenge_targets']:
-                            if target_protein not in state['psichic_models']:
-                                target_sequence = get_sequence_from_protein_code(target_protein)
-                                model = PsichicWrapper()
-                                model.run_challenge_start(target_sequence)
-                                state['psichic_models'][target_protein] = model
-                                bt.logging.info(f"Initialized model for target: {target_protein}")
-
-                        for antitarget_protein in state['current_challenge_antitargets']:
-                            if antitarget_protein not in state['psichic_models']:
-                                antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
-                                model = PsichicWrapper()
-                                model.run_challenge_start(antitarget_sequence)
-                                state['psichic_models'][antitarget_protein] = model
-                                bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
-                        bt.logging.info("Models re-downloaded and initialized successfully.")
-                    except Exception as e2:
-                        bt.logging.error(f"Error initializing models after re-download attempt: {e2}")
-
-                # Start new inference
-                try:
-                    state['inference_task'] = asyncio.create_task(run_psichic_model_loop(state))
-                    bt.logging.debug("New inference task started.")
-                except Exception as e:
-                    bt.logging.error(f"Error starting new inference: {e}")
-
+            # Update state with your results and other relevant info here
+            candidate_small_molecules, candidate_nanobodies = dummy_get_candidate_products()
+            state['candidate_small_molecules'] = candidate_small_molecules
+            state['candidate_nanobodies'] = candidate_nanobodies
+            
+            # Submit response
+            await submit_response(state)
+            await asyncio.sleep(12*100)
+                
+                
             # Periodically update our knowledge of the network
             if current_block % 60 == 0:
                 await metagraph.sync()
