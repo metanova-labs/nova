@@ -57,7 +57,7 @@ def validate_molecules_and_calculate_entropy(
                 #     break
 
                 # temporary: Always allow reactions 1 and 3, ignore config/random selection
-                allowed_ok = is_reaction_allowed(molecule, "rxn:1") or is_reaction_allowed(molecule, "rxn:3")
+                allowed_ok = is_reaction_allowed(molecule, "rxn:2") or is_reaction_allowed(molecule, "rxn:3")
                 if not allowed_ok:
                     bt.logging.warning(
                         f"UID={uid}, molecule='{molecule}' uses disallowed reaction for this temporary window (only 1 or 3 allowed)"
