@@ -1,7 +1,7 @@
 # Number of targets and antitargets to select
 protein_selection:
 
-  weekly_target: "Q63380"
+  weekly_target: "P31652"
   num_antitargets: 1
 
 protein_constraints: # target only
@@ -17,7 +17,7 @@ molecule_validation:
   entropy_bonus_threshold: 0
   entropy_start_weight: 0.3
 
-  entropy_start_epoch: 20377
+  entropy_start_epoch: 20516
   entropy_step_size: 0.007142857  # 1/140 to increase by 1.0 over about 1 week
   # Scoring weights for molecule repetition
   molecule_repetition_weight: 0
