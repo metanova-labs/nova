@@ -235,7 +235,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
             if log_message:
                 bt.logging.info(f"Epoch {current_epoch} {model_name} winner: UID={winner}, score={best_score}, block={winner_block}")
         else:
-            winner = tie_breaker(best_uids, best_score, model_name, print_message=False)
+            winner = tie_breaker(best_uids, best_score, model_name, print_message=True if model_name=='boltz' else False)
     else:
         winner = None
     
