@@ -223,3 +223,12 @@ def find_chemically_identical(smiles_list: list[str]) -> dict:
     duplicates = {k: v for k, v in inchikey_to_indices.items() if len(v) > 1}
     
     return duplicates
+
+def contains_atom_type(mol: Chem.Mol, atom_types: list[str]) -> bool:
+    """
+    Check if a molecule contains a specific atom type.
+    """
+    for atom in mol.GetAtoms():
+        if atom.GetSymbol() in atom_types:
+            return True
+    return False

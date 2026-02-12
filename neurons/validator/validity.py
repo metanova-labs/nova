@@ -8,7 +8,8 @@ from utils import (
     compute_maccs_entropy,
     molecule_unique_for_protein_hf,
     find_chemically_identical,
-    is_reaction_allowed
+    is_reaction_allowed,
+    contains_atom_type
 )
 
 
@@ -81,6 +82,13 @@ def validate_molecules_and_calculate_entropy(
 
                 try:
                     mol = Chem.MolFromSmiles(smiles)
+
+                    if contains_atom_type(mol, config['banned_atom_types']):
+                        bt.logging.warning(f"UID={uid}, molecule='{molecule}' contains banned atom types")
+                        valid_smiles = []
+                        valid_names = []
+                        break
+                        
                     num_rotatable_bonds = Descriptors.NumRotatableBonds(mol)
                     if num_rotatable_bonds < config['min_rotatable_bonds'] or num_rotatable_bonds > config['max_rotatable_bonds']:
                         bt.logging.warning(f"UID={uid}, molecule='{molecule}' has an invalid number of rotatable bonds")
