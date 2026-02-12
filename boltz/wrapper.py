@@ -115,7 +115,7 @@ sequences:
     - protein:
         id: A
         sequence: {self.protein_sequence}
-        msa: empty
+        msa: {os.path.join(self.base_dir, 'msa_files', self.subnet_config['weekly_target'] + '.a3m')}
     - ligand:
         id: B
         smiles: '{ligand_smiles}'
