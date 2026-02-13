@@ -26,6 +26,7 @@ molecule_validation:
   min_heavy_atoms: 10
   min_rotatable_bonds: 1
   max_rotatable_bonds: 10
+  banned_atom_types: ["Se"]
   # Number of molecules to validate with PSICHIC
   num_molecules: 1
   psichic_mode: "max" # "max" or "min"

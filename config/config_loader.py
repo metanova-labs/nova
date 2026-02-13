@@ -23,6 +23,7 @@ def load_config(path: str = "config/config.yaml"):
     min_heavy_atoms = validation_config["min_heavy_atoms"]
     min_rotatable_bonds = validation_config["min_rotatable_bonds"]
     max_rotatable_bonds = validation_config["max_rotatable_bonds"]
+    banned_atom_types = validation_config["banned_atom_types"]
     num_molecules = validation_config["num_molecules"]
     psichic_mode = validation_config["psichic_mode"]
     entropy_bonus_threshold = validation_config["entropy_bonus_threshold"]
@@ -55,6 +56,7 @@ def load_config(path: str = "config/config.yaml"):
         'min_heavy_atoms': min_heavy_atoms,
         'min_rotatable_bonds': min_rotatable_bonds,
         'max_rotatable_bonds': max_rotatable_bonds,
+        'banned_atom_types': banned_atom_types,
         'num_molecules': num_molecules,
         'psichic_mode': psichic_mode,
         'entropy_bonus_threshold': entropy_bonus_threshold,
