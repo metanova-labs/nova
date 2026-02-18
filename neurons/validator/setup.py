@@ -26,7 +26,7 @@ def get_config():
                        help='Path to local input file, enables local mode (doesnt get data from chain)')
 
     config = bt.config(parser)
-    config.netuid = 68
+    config.netuid = 379 #68 for mainnet
     config.network = os.environ.get("SUBTENSOR_NETWORK")
     node = SubstrateInterface(url=config.network)
     config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value + 1
