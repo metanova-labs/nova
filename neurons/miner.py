@@ -31,7 +31,7 @@ from utils import (
     compute_maccs_entropy,
 
 )
-from btdr import QuicknetBittensorDrandTimelock
+from utils.btdr import QuicknetBittensorDrandTimelock
 
 # ----------------------------------------------------------------------------
 # 1. CONFIG & ARGUMENT PARSING
@@ -48,7 +48,7 @@ def parse_arguments() -> argparse.Namespace:
     # Add override arguments for network.
     parser.add_argument('--network', default=os.getenv('SUBTENSOR_NETWORK'), help='Network to use')
     # Adds override arguments for netuid.
-    parser.add_argument('--netuid', type=int, default=68, help="The chain subnet uid.")
+    parser.add_argument('--netuid', type=int, default=379, help="The chain subnet uid.") #68 for mainnet
     # Bittensor standard argument additions.
     bt.subtensor.add_args(parser)
     bt.logging.add_args(parser)
