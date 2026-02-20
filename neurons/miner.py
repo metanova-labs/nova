@@ -228,31 +228,31 @@ async def submit_response(state: Dict[str, Any]) -> None:
         commit_content = f"{state['github_path']}/{filename}.txt"
         bt.logging.info(f"Prepared commit content: {commit_content}")
 
-        # 3) Attempt chain commitment
-        bt.logging.info(f"Attempting chain commitment...")
-        try: 
-            commitment_status = await state['subtensor'].set_commitment(
-                wallet=state['wallet'],
-                netuid=state['config'].netuid,
-                data=commit_content
-            )
-            bt.logging.info(f"Chain commitment status: {commitment_status}")
-        except MetadataError:
-            bt.logging.info("Too soon to commit again. Will keep looking for better candidates.")
-            return
+    # 3) Attempt chain commitment
+    bt.logging.info(f"Attempting chain commitment...")
+    try: 
+        commitment_status = await state['subtensor'].set_commitment(
+            wallet=state['wallet'],
+            netuid=state['config'].netuid,
+            data=commit_content
+        )
+        bt.logging.info(f"Chain commitment status: {commitment_status}")
+    except MetadataError:
+        bt.logging.info("Too soon to commit again. Will keep looking for better candidates.")
+        return
 
-        # 4) If chain commitment success, upload to GitHub
-        if commitment_status:
-            try:
-                bt.logging.info(f"Commitment set successfully for {commit_content}")
-                bt.logging.info("Attempting GitHub upload...")
-                github_status = upload_file_to_github(filename, encoded_content)
-                if github_status:
-                    bt.logging.info(f"File uploaded successfully to {commit_content}")
-                else:
-                    bt.logging.error(f"Failed to upload file to GitHub for {commit_content}")
-            except Exception as e:
-                bt.logging.error(f"Failed to upload file for {commit_content}: {e}")
+    # 4) If chain commitment success, upload to GitHub
+    if commitment_status:
+        try:
+            bt.logging.info(f"Commitment set successfully for {commit_content}")
+            bt.logging.info("Attempting GitHub upload...")
+            github_status = upload_file_to_github(filename, encoded_content)
+            if github_status:
+                bt.logging.info(f"File uploaded successfully to {commit_content}")
+            else:
+                bt.logging.error(f"Failed to upload file to GitHub for {commit_content}")
+        except Exception as e:
+            bt.logging.error(f"Failed to upload file for {commit_content}: {e}")
 
 
 # ----------------------------------------------------------------------------
