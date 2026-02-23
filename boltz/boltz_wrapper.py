@@ -30,25 +30,6 @@ def _get_record_id(rec_id, base_seed):
     h = hashlib.sha256(str(rec_id).encode()).digest()
     return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
 
-def _create_yaml_content(protein_sequence: str, ligand_smiles: str) -> str:
-    """Create YAML content for Boltz2 prediction with no MSA"""
-
-    yaml_content = f"""version: 1
-sequences:
-  - protein:
-      id: A
-      sequence: {protein_sequence}
-      msa: empty
-  - ligand:
-      id: B
-      smiles: {ligand_smiles}
-properties:
-  - affinity:
-      binder: B
-"""
-        
-    return yaml_content
-
 class BoltzWrapper:
     def __init__(self):
         config_path = os.path.join(NOVA_DIR, "config", "boltz_config.yaml")
@@ -73,6 +54,25 @@ class BoltzWrapper:
         np.random.seed(self.base_seed)
         torch.manual_seed(self.base_seed)
 
+    def _create_yaml_content(self, target: str, protein_sequence: str, ligand_smiles: str) -> str:
+        """Create YAML content for Boltz2 prediction with MSA"""
+
+        yaml_content = f"""version: 1
+sequences:
+  - protein:
+      id: A
+      sequence: {protein_sequence}
+      msa: {os.path.join(self.base_dir, "boltz", "msa_files", target + ".a3m")}
+  - ligand:
+      id: B
+      smiles: {ligand_smiles}
+properties:
+  - affinity:
+      binder: B
+"""
+        
+        return yaml_content
+
     def _preprocess_data_for_boltz(self, valid_molecules_by_uid: dict, score_dict: dict) -> None:
         # Collect all unique molecules across all UIDs
         self.unique_molecules = {}  # {smiles: [(uid, mol_id), ...]}
@@ -96,7 +96,7 @@ class BoltzWrapper:
             for target in self.subnet_config['small_molecule_target']:
                 protein_sequence = get_sequence_from_protein_code(target)
                 for smiles, ids in self.unique_molecules.items():
-                    yaml_content = _create_yaml_content(protein_sequence, smiles)
+                    yaml_content = self._create_yaml_content(target, protein_sequence, smiles)
                     with open(os.path.join(self.input_dir, f"{ids[0][1]}_{target}.yaml"), "w") as f:
                         f.write(yaml_content)
             bt.logging.info(f"YAML files written successfully")
@@ -228,7 +228,7 @@ class BoltzWrapper:
     def _distribute_scores(self, scores: dict) -> None:
         self.per_molecule_components = {}
         self.final_boltz_scores = {}
-        bt.logging.debug(f"molecules: {self.unique_molecules}")
+        bt.logging.info(f"molecules: {self.unique_molecules}")
 
         for smiles, id_list in self.unique_molecules.items():
             try:
