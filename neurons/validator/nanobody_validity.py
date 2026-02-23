@@ -31,6 +31,14 @@ def validate_nanobodies(
         if any("~" in seq for seq in normalized_sequences):
             continue
 
+        if len(normalized_sequences) > config["num_sequences"]:
+            bt.logging.warning(f"UID {uid} submission contains {len(normalized_sequences)} sequences, considering only first {config['num_sequences']}")
+            normalized_sequences = normalized_sequences[:config["num_sequences"]]
+            submission_hashes = submission_hashes[:config["num_sequences"]]
+        elif len(normalized_sequences) < config["num_sequences"]:
+            bt.logging.warning(f"UID {uid} submission contains {len(normalized_sequences)} sequences, expected {config['num_sequences']}, skipping")
+            continue
+
         # check for duplicate sequences
         if len(submission_hashes) != len(set(submission_hashes)):
             bt.logging.warning(f"UID {uid} submission contains duplicate sequences")
