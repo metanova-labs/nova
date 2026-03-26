@@ -26,6 +26,8 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from config.config_loader import load_config
+from github_paths import build_github_path
+from neurons.downloads import download_model_file
 from utils import (
     get_sequence_from_protein_code,
     upload_file_to_github,
@@ -85,26 +87,13 @@ def load_github_path() -> str:
     
     Returns:
         str: The fully qualified GitHub path (owner/repo/branch/path).
-    Raises:
-        ValueError: If the final path exceeds 100 characters.
     """
     github_repo_name = os.environ.get('GITHUB_REPO_NAME')  # e.g., "nova"
     github_repo_branch = os.environ.get('GITHUB_REPO_BRANCH')  # e.g., "main"
     github_repo_owner = os.environ.get('GITHUB_REPO_OWNER')  # e.g., "metanova-labs"
     github_repo_path = os.environ.get('GITHUB_REPO_PATH')  # e.g., "data/results" or ""
 
-    if github_repo_name is None or github_repo_branch is None or github_repo_owner is None:
-        raise ValueError("Missing one or more GitHub environment variables (GITHUB_REPO_*)")
-
-    if github_repo_path == "":
-        github_path = f"{github_repo_owner}/{github_repo_name}/{github_repo_branch}"
-    else:
-        github_path = f"{github_repo_owner}/{github_repo_name}/{github_repo_branch}/{github_repo_path}"
-
-    if len(github_path) > 100:
-        raise ValueError("GitHub path is too long. Please shorten it to 100 characters or less.")
-
-    return github_path
+    return build_github_path(github_repo_owner, github_repo_name, github_repo_branch, github_repo_path)
 
 
 # ----------------------------------------------------------------------------
@@ -499,10 +488,11 @@ async def run_miner(config: argparse.Namespace) -> None:
                 state['psichic_models'][antitarget_protein] = model
                 bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
         except Exception as e:
+            bt.logging.warning(f"Initial model setup failed, retrying after redownloading weights: {e}")
             try:
-                os.system(
-                    f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} "
-                    f"https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                download_model_file(
+                    os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt'),
+                    "https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt",
                 )
                 # Retry initialization after download
                 for target_protein in state['current_challenge_targets']:
@@ -587,10 +577,11 @@ async def run_miner(config: argparse.Namespace) -> None:
                             state['psichic_models'][antitarget_protein] = model
                             bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
                 except Exception as e:
+                    bt.logging.warning(f"Model refresh failed, retrying after redownloading weights: {e}")
                     try:
-                        os.system(
-                            f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} "
-                            f"https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt"
+                        download_model_file(
+                            os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt'),
+                            "https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt",
                         )
                         # Retry initialization after download
                         for target_protein in state['current_challenge_targets']:

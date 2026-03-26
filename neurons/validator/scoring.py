@@ -3,9 +3,11 @@ PSICHIC-based molecular scoring functionality for the validator
 """
 
 import math
-import os
+from typing import Any, Optional
+
 import bittensor as bt
 
+from neurons.downloads import download_model_file
 from utils import get_sequence_from_protein_code
 
 # Global variable to store PSICHIC instance - will be set by validator.py
@@ -13,13 +15,31 @@ psichic = None
 BASE_DIR = None
 
 
+def _apply_failed_initialization_scores(
+    score_dict: dict[int, dict[str, Any]],
+    valid_molecules_by_uid: dict[int, dict[str, list[str]]],
+    uid_to_data: Optional[dict[int, dict[str, Any]]],
+    score_key: str,
+    col_idx: int,
+) -> list[int]:
+    affected_uids = []
+    for uid in score_dict:
+        num_molecules = len(valid_molecules_by_uid.get(uid, {}).get('smiles', []))
+        if num_molecules == 0 and uid_to_data:
+            num_molecules = len(uid_to_data.get(uid, {}).get("molecules", []))
+        score_dict[uid][score_key][col_idx] = [-math.inf] * num_molecules
+        affected_uids.append(uid)
+
+    return affected_uids
+
+
 def score_all_proteins_psichic(
     target_proteins: list[str],
     antitarget_proteins: list[str],
-    score_dict: dict[int, dict[str, list[list[float]]]],
+    score_dict: dict[int, dict[str, Any]],
     valid_molecules_by_uid: dict[int, dict[str, list[str]]],
-    uid_to_data: dict = None,
-    batch_size: int = 32
+    uid_to_data: Optional[dict[int, dict[str, Any]]] = None,
+    batch_size: int = 32,
 ) -> None:
     """
     Score all molecules against all proteins using efficient batching.
@@ -55,19 +75,28 @@ def score_all_proteins_psichic(
             psichic.run_challenge_start(protein_sequence)
             bt.logging.info('Model initialized successfully.')
         except Exception as e:
+            bt.logging.warning(f"Model initialization failed for protein {protein}, retrying after re-download: {e}")
             try:
                 if BASE_DIR:
-                    os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/TREAT1/model.pt')} https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt")
+                    download_model_file(
+                        f"{BASE_DIR}/PSICHIC/trained_weights/TREAT1/model.pt",
+                        "https://huggingface.co/Metanova/TREAT-1/resolve/main/model.pt",
+                    )
                 psichic.run_challenge_start(protein_sequence)
                 bt.logging.info('Model initialized successfully.')
-            except Exception as e:
-                bt.logging.error(f'Error initializing model: {e}')
-                # Set all scores to -inf for this protein
-                for uid in score_dict:
-                    num_molecules = len(valid_molecules_by_uid.get(uid, {}).get('smiles', []))
-                    if num_molecules == 0 and uid_to_data:
-                        num_molecules = len(uid_to_data.get(uid, {}).get("molecules", []))
-                    score_dict[uid]["target_scores" if is_target else "antitarget_scores"][col_idx] = [-math.inf] * num_molecules
+            except Exception as retry_error:
+                score_key = "target_scores" if is_target else "antitarget_scores"
+                affected_uids = _apply_failed_initialization_scores(
+                    score_dict=score_dict,
+                    valid_molecules_by_uid=valid_molecules_by_uid,
+                    uid_to_data=uid_to_data,
+                    score_key=score_key,
+                    col_idx=col_idx,
+                )
+                bt.logging.error(
+                    f"Error initializing model for protein {protein}: {retry_error}. "
+                    f"Setting -inf for UIDs {affected_uids}."
+                )
                 continue
         
         # Collect all unique molecules across all UIDs
@@ -149,5 +178,4 @@ def score_molecule_individually(smiles: str) -> float:
     except Exception as e:
         bt.logging.error(f"Error scoring molecule {smiles}: {e}")
         return -math.inf
-
 

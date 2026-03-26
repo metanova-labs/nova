@@ -79,7 +79,15 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         # Gather and decrypt commitments
         uid_to_data, current_commitments, decrypted_submissions, push_timestamps = await gather_and_decrypt_commitments(
-            subtensor, metagraph, config.netuid, start_block, current_block, config.no_submission_blocks, GITHUB_HEADERS, btd
+            subtensor,
+            metagraph,
+            config.netuid,
+            start_block,
+            current_block,
+            config.no_submission_blocks,
+            GITHUB_HEADERS,
+            btd,
+            config.num_molecules,
         )
 
         if not uid_to_data:
@@ -169,8 +177,20 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             bt.logging.debug(f"boltz_score_averages: {boltz_score_averages}")
 
         # Determine winner for each model
-        winner_psichic = determine_winner(score_dict, mode=config['psichic_mode'], model_name="psichic", log_message=False)
-        winner_boltz = determine_winner(score_dict, mode=config['boltz_mode'], model_name="boltz", log_message=True)
+        winner_psichic = determine_winner(
+            score_dict,
+            mode=config['psichic_mode'],
+            model_name="psichic",
+            log_message=False,
+            epoch_length=config.epoch_length,
+        )
+        winner_boltz = determine_winner(
+            score_dict,
+            mode=config['boltz_mode'],
+            model_name="boltz",
+            log_message=True,
+            epoch_length=config.epoch_length,
+        )
 
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)

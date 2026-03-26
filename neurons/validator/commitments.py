@@ -7,7 +7,7 @@ import hashlib
 import requests
 from ast import literal_eval
 from types import SimpleNamespace
-from typing import cast, Optional
+from typing import Any, Mapping, Optional, cast
 
 import bittensor as bt
 from bittensor.core.chain_data.utils import decode_metadata
@@ -53,7 +53,7 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, mi
     return result
 
 
-def tuple_safe_eval(input_str: str) -> tuple:
+def tuple_safe_eval(input_str: str) -> Optional[tuple[int, bytes]]:
     # Limit input size to prevent overly large inputs.
     if len(input_str) > MAX_RESPONSE_SIZE:
         bt.logging.error("Input exceeds allowed size")
@@ -84,7 +84,12 @@ def tuple_safe_eval(input_str: str) -> tuple:
     return result
 
 
-def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, config: dict) -> tuple[dict, dict]:
+def decrypt_submissions(
+    current_commitments: dict[str, SimpleNamespace],
+    github_headers: dict[str, str],
+    btd: Any,
+    config: Mapping[str, int],
+) -> tuple[dict[int, list[str]], dict[int, str]]:
     """Fetch GitHub submissions and file-specific commit timestamps, then decrypt"""
 
     file_paths = [commit.data for commit in current_commitments.values() if '/' in commit.data]
@@ -156,7 +161,17 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
     bt.logging.info(f"GitHub: {len(file_paths)} paths → {len(decrypted_submissions)} decrypted")
     return decrypted_submissions, push_timestamps
 
-async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_block, current_block, no_submission_blocks, github_headers, btd):
+async def gather_and_decrypt_commitments(
+    subtensor: Any,
+    metagraph: Any,
+    netuid: int,
+    start_block: int,
+    current_block: int,
+    no_submission_blocks: int,
+    github_headers: dict[str, str],
+    btd: Any,
+    num_molecules: int,
+) -> tuple[dict[int, dict[str, Any]], dict[str, SimpleNamespace], dict[int, list[str]], dict[int, str]]:
     # Get commitments
     current_block_hash = await subtensor.determine_block_hash(current_block)
     current_commitments = await get_commitments(
@@ -171,7 +186,7 @@ async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_blo
 
     # Decrypt submissions
     decrypted_submissions, push_timestamps = decrypt_submissions(
-        current_commitments, github_headers, btd, {"num_molecules": 1}  # Default config
+        current_commitments, github_headers, btd, {"num_molecules": num_molecules}
     )
 
     # Prepare structured data

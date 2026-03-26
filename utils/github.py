@@ -2,6 +2,7 @@ import os
 import requests
 import bittensor as bt
 from dotenv import load_dotenv
+from github_paths import build_github_path, normalize_github_repo_path
 
 load_dotenv(override=True)
 
@@ -17,7 +18,9 @@ def upload_file_to_github(filename: str, encoded_content: str):
     if not github_repo_name or not github_repo_branch or not github_token or not github_repo_owner:
         raise ValueError("Github environment variables not set. Please set them in your .env file.")
 
-    target_file_path = os.path.join(github_repo_path, f'{filename}.txt')
+    build_github_path(github_repo_owner, github_repo_name, github_repo_branch, github_repo_path)
+    normalized_repo_path = normalize_github_repo_path(github_repo_path)
+    target_file_path = f"{normalized_repo_path}/{filename}.txt" if normalized_repo_path else f"{filename}.txt"
     url = f"https://api.github.com/repos/{github_repo_owner}/{github_repo_name}/contents/{target_file_path}"
     headers = {
         "Authorization": f"Bearer {github_token}",

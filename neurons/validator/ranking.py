@@ -4,19 +4,19 @@ Final scoring and winner determination functionality for the validator
 
 import math
 import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import bittensor as bt
 from utils import calculate_dynamic_entropy
 
 
 def calculate_final_scores(
-    score_dict: dict[int, dict[str, list[list[float]]]],
+    score_dict: dict[int, dict[str, Any]],
     valid_molecules_by_uid: dict[int, dict[str, list[str]]],
     molecule_name_counts: dict[str, int],
     config: dict,
     current_epoch: int
-) -> dict[int, dict[str, list[list[float]]]]:
+) -> dict[int, dict[str, Any]]:
     """
     Calculates final scores per molecule for each UID, considering target and antitarget scores.
     Applies entropy bonus and tie-breaking by earliest submission block.
@@ -66,11 +66,19 @@ def calculate_final_scores(
                 combined_molecule_scores.append(-math.inf)
                 molecule_scores_after_repetition.append(-math.inf)
                 continue
+            if not target_scores_for_mol:
+                combined_molecule_scores.append(-math.inf)
+                molecule_scores_after_repetition.append(-math.inf)
+                continue
             avg_target = sum(target_scores_for_mol) / len(target_scores_for_mol)
 
             # Calculate average antitarget score for this molecule
             antitarget_scores_for_mol = [antitarget_list[mol_idx] for antitarget_list in antitargets]
             if any(score == -math.inf for score in antitarget_scores_for_mol):
+                combined_molecule_scores.append(-math.inf)
+                molecule_scores_after_repetition.append(-math.inf)
+                continue
+            if not antitarget_scores_for_mol:
                 combined_molecule_scores.append(-math.inf)
                 molecule_scores_after_repetition.append(-math.inf)
                 continue
@@ -141,7 +149,13 @@ def calculate_final_scores(
     return score_dict
 
 
-def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: str = "max", model_name: str = "boltz", log_message: bool = True) -> Optional[int]:
+def determine_winner(
+    score_dict: dict[int, dict[str, Any]],
+    mode: str = "max",
+    model_name: str = "boltz",
+    log_message: bool = True,
+    epoch_length: int = 361,
+) -> Optional[int]:
     """
     Determines the winning UID based on final score.
     In case of ties, earliest submission time is used as the tiebreaker.
@@ -162,7 +176,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
 
     best_uids = []
 
-    def parse_timestamp(uid):
+    def parse_timestamp(uid: int) -> datetime.datetime:
         ts = score_dict[uid].get('push_time', '')
         try:
             return datetime.datetime.fromisoformat(ts)
@@ -170,7 +184,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
             bt.logging.warning(f"Failed to parse timestamp '{ts}' for UID={uid}: {e}")
             return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
 
-    def tie_breaker(tied_uids: list[int], best_score: float, model_name: str, print_message: bool = True):
+    def tie_breaker(tied_uids: list[int], best_score: float, model_name: str, print_message: bool = True) -> int:
         # Sort by block number first, then push time, then uid to ensure deterministic result
         winner = sorted(tied_uids, key=lambda uid: (
             score_dict[uid].get('block_submitted', float('inf')), 
@@ -179,7 +193,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
         ))[0]
         
         winner_block = score_dict[winner].get('block_submitted')
-        current_epoch = winner_block // 361 if winner_block else None
+        current_epoch = winner_block // epoch_length if winner_block is not None else None
         push_time = score_dict[winner].get('push_time', '')
         
         tiebreaker_message = f"Epoch {current_epoch} tiebreaker {model_name} winner: UID={winner}, score={best_score}, block={winner_block}"
@@ -230,7 +244,7 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], mode: 
     if best_uids:
         if len(best_uids) == 1:
             winner_block = score_dict[best_uids[0]].get('block_submitted')
-            current_epoch = winner_block // 361 if winner_block else None
+            current_epoch = winner_block // epoch_length if winner_block is not None else None
             winner = best_uids[0]
             if log_message:
                 bt.logging.info(f"Epoch {current_epoch} {model_name} winner: UID={winner}, score={best_score}, block={winner_block}")
