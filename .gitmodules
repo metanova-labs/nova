@@ -1,0 +1,3 @@
+[submodule "NOVA-nanobody-filter"]
+	path = NOVA-nanobody-filter
+	url = https://github.com/frankji-groundcontrol/NOVA-nanobody-filter.git
