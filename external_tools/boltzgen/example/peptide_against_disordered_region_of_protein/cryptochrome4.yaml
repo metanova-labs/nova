@@ -1,0 +1,24 @@
+entities:
+  - protein: 
+      id: B
+      sequence: 12..20
+  - file:
+      path: cryptochrome4_european_robin_bird_boltz_prediction.cif
+       
+      include:
+        - chain:
+            id: A
+
+      structure_groups:
+        - group:
+            visibility: 1
+            id: A
+        - group:
+            visibility: 0
+            id: A
+            res_index: 494..
+
+      binding_types:
+        - chain:
+            id: A
+            binding: 494..507

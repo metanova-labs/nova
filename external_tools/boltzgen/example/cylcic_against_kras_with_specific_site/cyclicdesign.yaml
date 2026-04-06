@@ -1,0 +1,26 @@
+entities:
+  # Specify a designed protein chain
+  # random number between 8 and 16 of designed residues (inclusive)
+  - protein: 
+      id: B
+      sequence: 8..16
+      # Make the designed peptide cyclic
+      cyclic: true
+
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: 8jjs.cif
+      # Which chain and residues in the .cif file to use as target
+      # Here we include chains A and C (all residues on each chain)
+      include: 
+        - chain:
+            id: A
+        - chain:
+            id: C
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify discrete binding residues on chain A
+      binding_types:
+        - chain:
+            id: A
+            binding: 12,14,61,63,73,76,77,83,101,104,108
+          

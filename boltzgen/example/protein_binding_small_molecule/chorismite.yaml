@@ -1,7 +1,0 @@
-entities:
-  - protein:
-      id: A
-      sequence: 140..180
-  - ligand:
-      id: B
-      ccd: TSA

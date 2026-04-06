@@ -1,0 +1,43 @@
+entities:
+  # Specify a designed protein chain
+  # 1 design residue, Cystein, 11..16 design residues, Cystein, 1 design residue, Cystein
+  - protein:
+      id: B
+      sequence: 1C11..16C1
+      # Specify the secondary structure of the designed peptide (here we require sheet at residues 1 and 3..11)
+      secondary_structure:
+          sheet: 1,3..11
+
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: 7nre.cif
+      # Which chain and residues in the .cif file to use as target (here includes residues 24..on chain A)
+      include:
+        - chain:
+            id: A
+            res_index: 24..
+      
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify that the design should bind to residues 26..31,381,408 on chain A
+      binding_types:
+        - chain:
+            id: A
+            binding: 26..31,381,408
+
+      # Include residues within a radius of a reference region
+      # Here we include residues within a radius 28 of residues 26..31,381,408 on chain A
+      include_proximity:
+        - chain: 
+            id: A
+            res_index: 26..31,381,408
+            radius: 28
+
+      
+  
+
+constraints:
+  # Specify covalent disulfide bonds between the designed residues on chain B 
+  - bond:
+      atom1: [B, 2, SG]  # connect SG of residue 2 to SG of residue 14 on chain B
+      atom2: [B, 14, SG]
+

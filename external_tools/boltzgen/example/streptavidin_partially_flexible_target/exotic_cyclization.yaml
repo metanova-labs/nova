@@ -1,0 +1,27 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 8..11E1..4
+  - file:
+      path: 1mk5.cif
+       
+      include: 
+        - chain:
+            id: A
+
+      structure_groups:
+        - group:
+            id: A
+            visibility: 1
+        - group:
+            id: A
+            visibility: 0
+            res_index: 32..42
+
+constraints:
+  - bond:
+      atom1: [C, 1, N] 
+      atom2: [C, 9, CD]
+
+leaving_atoms:
+  - atom: [C, 9, OE2] # remove the additional atom of the GLU
