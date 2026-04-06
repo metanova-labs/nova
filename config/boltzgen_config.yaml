@@ -17,13 +17,16 @@ noise_scale: 0.88
 
 # metrics to collect and ranking mode: min or max
 metrics:
-  design_iiptm: max, 
-  design_ptm: max, 
-  design_to_target_iptm: max, 
-  min_design_to_target_pae: min, 
-  interaction_pae: min, 
-  plip_hbonds_refolded: max, 
-  plip_saltbridge_refolded: max, 
-  delta_sasa_refolded: max, 
-  liability_score: min, 
-  liability_num_violations: min
+  confidence:
+    design_iiptm: max, 
+    design_ptm: max, 
+    design_to_target_iptm: max, 
+    min_design_to_target_pae: min, 
+    interaction_pae: min, 
+  physical_interaction:
+    plip_hbonds_refolded: max, 
+    plip_saltbridge_refolded: max, 
+    delta_sasa_refolded: max,
+  developability:
+    liability_score: min, 
+    liability_num_violations: min,

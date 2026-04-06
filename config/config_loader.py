@@ -48,10 +48,15 @@ def load_config(path: str = "config/config.yaml"):
     sp_window = nanobody_config["sp_window"]
     sp_hydro_min_in_window = nanobody_config["sp_hydro_min_in_window"]
     sp_scan_prefix = nanobody_config["sp_scan_prefix"]
+    min_nativeness_score = nanobody_config["min_nativeness_score"]
+    min_human_framework_score = nanobody_config["min_human_framework_score"]
+    max_similarity_score = nanobody_config["max_similarity_score"]
+    num_top_sequences = nanobody_config["num_top_sequences"]
 
     # Load reaction filtering configuration
     reaction_config = config["reaction_filtering"]
     random_valid_reaction = reaction_config["random_valid_reaction"]
+    allowed_reactions = reaction_config["allowed_reactions"]
 
     return {
         'small_molecule_target': small_molecule_target,
@@ -64,6 +69,7 @@ def load_config(path: str = "config/config.yaml"):
         'num_molecules': num_molecules,
         'min_entropy': min_entropy,
         'random_valid_reaction': random_valid_reaction,
+        'allowed_reactions': allowed_reactions,
         'boltz_metric': boltz_metric,
         'combination_strategy': combination_strategy,
         'boltz_mode': boltz_mode,
@@ -79,6 +85,23 @@ def load_config(path: str = "config/config.yaml"):
         'sp_window': sp_window,
         'sp_hydro_min_in_window': sp_hydro_min_in_window,
         'sp_scan_prefix': sp_scan_prefix,
+        'min_nativeness_score': min_nativeness_score,
+        'min_human_framework_score': min_human_framework_score,
+        'max_similarity_score': max_similarity_score,
+        'num_top_sequences': num_top_sequences,
         'boltzgen_rank_mode': boltzgen_rank_mode,
         'boltzgen_rank_by': boltzgen_rank_by,
     }
+
+def load_boltzgen_metrics(path: str = "config/boltzgen_config.yaml") -> dict:
+    """Load boltzgen nanobody metrics as a flat {metric_name: mode} dict,
+    regardless of category grouping in the YAML."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Could not find boltzgen config at '{path}'")
+    with open(path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    flat = {}
+    for category, metric_dict in config.get("metrics", {}).items():
+        if isinstance(metric_dict, dict):
+            flat.update(metric_dict)
+    return flat
