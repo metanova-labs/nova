@@ -79,17 +79,17 @@ async def validate_nanobodies(
         cys_counts = [seq.count("C") for seq in normalized_sequences]
         if any(cys_count < config["min_cysteines"] for cys_count in cys_counts):
             bt.logging.warning(f"UID {uid}: contains sequences with too few cysteines")
-            #continue
+            continue
 
         if config["min_cysteines"] > 1:
             if not any(has_plausible_cys_pair(seq, config["cys_pair_min_separation"], config["cys_pair_max_separation"]) for seq in normalized_sequences):
                 bt.logging.warning(f"UID {uid}: contains sequences with no plausible cysteine pairs")
-                #continue
+                continue
 
         # signal peptide heuristic
         if any(looks_like_signal_peptide(seq, config["sp_window"], config["sp_hydro_min_in_window"], config["sp_scan_prefix"]) for seq in normalized_sequences):
             bt.logging.warning(f"UID {uid}: contains signal peptide-like sequences")
-            #continue
+            continue
 
         # check for exact duplicates in all previous submissions
         is_unique = True
