@@ -1,0 +1,21 @@
+{
+  "version": "1.2",
+  "dbname": "camelid_V",
+  "dbtype": "Protein",
+  "db-version": 4,
+  "description": "igblast/database/camelid_V.fasta",
+  "number-of-letters": 14572,
+  "number-of-sequences": 152,
+  "last-updated": "2026-03-03T17:48:00",
+  "number-of-volumes": 1,
+  "bytes-total": 32566,
+  "bytes-to-cache": 16037,
+  "files": [
+    "camelid_V.phr",
+    "camelid_V.pin",
+    "camelid_V.pog",
+    "camelid_V.psd",
+    "camelid_V.psi",
+    "camelid_V.psq"
+  ]
+}

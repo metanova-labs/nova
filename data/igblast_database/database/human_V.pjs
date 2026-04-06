@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "human_V",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "human_V_clean_270226.fasta",
+  "number-of-letters": 45403,
+  "number-of-sequences": 469,
+  "last-updated": "2026-02-28T02:22:00",
+  "number-of-volumes": 1,
+  "bytes-total": 158115,
+  "bytes-to-cache": 49737,
+  "files": [
+    "human_V.pdb",
+    "human_V.phr",
+    "human_V.pin",
+    "human_V.pog",
+    "human_V.pos",
+    "human_V.pot",
+    "human_V.psq",
+    "human_V.ptf",
+    "human_V.pto"
+  ]
+}
