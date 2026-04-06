@@ -9,6 +9,7 @@ import gc
 import traceback
 import multiprocessing as mp
 import shutil
+from pathlib import Path
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(BASE_DIR)
@@ -26,6 +27,12 @@ from neurons.validator.ranking import calculate_scores_for_type, determine_winne
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
 from neurons.validator.score_sharing import apply_external_scores
+from boltzgen.boltzgen_wrapper import BoltzgenWrapper
+
+try:
+    from prot_viz_pkg.run import main as run_protein_viz
+except Exception as e:
+    bt.logging.info(f"protein viz package not found, skipping")
 
 # Initialize global components (lazy loading for models)
 boltz = None
@@ -44,6 +51,8 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         start_block_hash = await subtensor.determine_block_hash(start_block)
         final_block_hash = await subtensor.determine_block_hash(current_block)
         current_epoch = (current_block // config.epoch_length) - 1
+
+        bt.logging.info(f"Epoch {current_epoch} scoring started.")
 
         # Get challenge parameters for this epoch
         challenge_params = get_challenge_params_from_blockhash(
@@ -97,7 +106,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             allowed_reaction=allowed_reaction
         )
 
-        valid_nanobodies_by_uid = validate_nanobodies(
+        valid_nanobodies_by_uid = await validate_nanobodies(
             uid_to_data=uid_to_data,
             score_dict=score_dict,
             config=config,
@@ -106,18 +115,50 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         result = inference.main(valid_molecules_by_uid, valid_nanobodies_by_uid, score_dict, config)
         boltz = result.boltz
         boltzgen = result.boltzgen
-        bt.logging.debug(f"score_dict: {score_dict}")
-        if boltzgen:
-            bt.logging.debug(f"final_boltzgen_scores: {boltzgen.final_boltzgen_scores}")
-            bt.logging.debug(f"per_nanobody_components: {boltzgen.per_nanobody_components}")
 
-        # update score_dict for molecules
+        # update score_dict for molecules 
+        # (before external score sharing because averaging final scores and components is equivalent)
+        # nanobody final scores are calculated after score sharing
         score_dict = calculate_scores_for_type(
             score_dict=score_dict,
             valid_items_by_uid=valid_molecules_by_uid,
             item_type="molecule",
             config=config
         )
+
+        external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
+        #if external_api_url and not test_mode:
+        if True:
+            external_api_key = os.environ.get('VALIDATOR_API_KEY')
+            score_dict = await apply_external_scores(
+                score_dict=score_dict,
+                valid_molecules_by_uid=valid_molecules_by_uid,
+                valid_nanobodies_by_uid=valid_nanobodies_by_uid,
+                api_url=external_api_url,
+                api_key=external_api_key,
+                epoch=current_epoch,
+                boltz=boltz,
+                boltzgen=boltzgen,
+                subtensor=subtensor,
+                epoch_end_block=current_block,
+                test_mode=True,
+            )
+
+        # update scores for nanobodies
+        if valid_nanobodies_by_uid and boltzgen and boltzgen.per_nanobody_components:
+            rank_mode = getattr(config, "boltzgen_rank_mode", None) or getattr(config, "rank_mode", "min")
+            final_boltzgen_scores, _ = BoltzgenWrapper.finalize_from_shared_components(
+                boltzgen.per_nanobody_components,
+                valid_nanobodies_by_uid,
+                config,
+            )
+            inference._merge_boltzgen_into_score_dict(
+                score_dict,
+                final_boltzgen_scores,
+                valid_nanobodies_by_uid,
+                config,
+                rank_mode=rank_mode,
+            )
         
         score_dict = calculate_scores_for_type(
             score_dict=score_dict,
@@ -125,22 +166,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             item_type="nanobody",
             config=config
         )
-
-        # TODO: Add external score sharing for nanobodies
-        external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
-        if external_api_url and not test_mode:
-            external_api_key = os.environ.get('VALIDATOR_API_KEY')
-            score_dict = await apply_external_scores(
-                score_dict=score_dict,
-                valid_molecules_by_uid=valid_molecules_by_uid,
-                api_url=external_api_url,
-                api_key=external_api_key,
-                epoch=current_epoch,
-                boltz_per_molecule=getattr(boltz, "per_molecule_metric", None) if boltz is not None else None,
-                subtensor=subtensor,
-                epoch_end_block=current_block + config.epoch_length,
-            )
-
+       
         # Determine winner for each model
         winner_molecules = determine_winner(score_dict, config=config, item_type="molecule")
         winner_nanobodies = determine_winner(score_dict, config=config, item_type="nanobody")
@@ -157,46 +183,47 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                     config=config,
                     metagraph=metagraph,
                     boltz=boltz,
+                    boltzgen=boltzgen,
                     current_block=current_block,
                     start_block=start_block,
                     current_epoch=current_epoch,
-                    target_proteins=target_proteins,
-                    antitarget_proteins=antitarget_proteins,
                     uid_to_data=uid_to_data,
                     valid_molecules_by_uid=valid_molecules_by_uid,
-                    molecule_name_counts=molecule_name_counts,
-                    score_dict=score_dict
+                    valid_nanobodies_by_uid=valid_nanobodies_by_uid,
+                    score_dict=score_dict,
                 )
+                # only our validator creates protein viz files
+                try:
+                    mmcif_dir = os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files", "outputs", "intermediate_designs", "refold_cif")
+                    for mmcif_file in os.listdir(mmcif_dir):
+                        if mmcif_file.endswith(".cif"):
+                            mmcif_path = Path(os.path.join(mmcif_dir, mmcif_file))
+                            run_protein_viz(mmcif_path=mmcif_path, 
+                            chain_a="A", chain_b="B", output_path=Path(os.path.join(mmcif_dir, f"{mmcif_file.replace('.cif', '.html')}")), 
+                            upload=True, epoch=current_epoch)
+                except Exception as e:
+                    bt.logging.error(f"Error running protein viz: {e}")
 
         except Exception as e:
             bt.logging.error(f"Failed to submit results to dashboard API: {e}")
-        # only our validator keeps structure files
-        if not submit_url:
-            try:
-                shutil.rmtree(os.path.join(BASE_DIR, "boltz", "boltz_tmp_files"))
-                shutil.rmtree(os.path.join(BASE_DIR, "boltzgen", "boltzgen_tmp_files"))
-            except Exception as e:
-                bt.logging.warning(f"Error cleaning up temporary files: {e}")
-        
-        # Monitor validators
-        # TODO: adapt monitoring to current structure
-        if not test_mode:
-            try:
-                set_weights_call_block = await subtensor.get_current_block()
-            except asyncio.CancelledError:
-                bt.logging.info("Resetting subtensor connection.")
-                subtensor = bt.async_subtensor(network=config.network)
-                await subtensor.initialize()
-                await asyncio.sleep(1)
-                set_weights_call_block = await subtensor.get_current_block()
-            monitor_validator(
-                score_dict=score_dict,
-                metagraph=metagraph,
-                current_epoch=current_epoch,
-                current_block=set_weights_call_block,
-                validator_hotkey=wallet.hotkey.ss58_address,
-                winning_uid=winner_molecules
-            )
+            bt.logging.error(traceback.format_exc())            
+
+        # clean up temporary files if they exist
+        try:
+            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            bt.logging.warning(f"Error cleaning up temporary files: {e}")
+
+        try:
+            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            bt.logging.warning(f"Error cleaning up temporary files: {e}")
+
+        bt.logging.info(f"Epoch {current_epoch} scoring finished.")
 
         return winner_molecules, winner_nanobodies
 

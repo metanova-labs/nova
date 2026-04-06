@@ -10,7 +10,7 @@ from rdkit import Chem
 
 def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: str, nanobody_target: str, num_antitargets: int = 0, include_reaction: bool = False) -> dict:
     """
-    Use block_hash as a seed to pick 'random_valid_reaction' and/or 'antitargets' random entries. 
+    Use block_hash as a seed to pick 'random_valid_reaction'. If num_antitargets > 0, also pick 'antitargets' random entries (out of use).
     Returns {'small_molecule_target': ..., 'nanobody_target': ..., 'random_valid_reaction': ..., 'antitargets': [...], 'allowed_reaction': '...'}.
     """
     if not (isinstance(block_hash, str) and block_hash.startswith("0x")):
@@ -101,7 +101,10 @@ def entry_unique_for_protein_hf(protein: str, entry_id: str, entity_type: str = 
             cached_sha = None
             entry_ids_set = None
         
-        filename = f"{protein}_{entity_type}.csv"
+        if entity_type == 'nanobodies':
+            filename = f"{protein}_{entity_type}_TEST.csv"
+        else:
+            filename = f"{protein}_{entity_type}.json"
         
         if cached_sha is None or (current_time - last_check_time > metadata_ttl):
             url = hf_hub_url(

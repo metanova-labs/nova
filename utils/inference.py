@@ -27,14 +27,18 @@ class BoltzResult:
 
 
 class BoltzgenResult(NamedTuple):
-    """stand-in for BoltzgenWrapper when inference runs in subprocesses"""
+    """stand-in for BoltzgenWrapper when inference runs in subprocesses.
+
+    ``final_boltzgen_scores`` is always None here; the validator merges ranked
+    nanobody scores into ``score_dict`` after score sharing.
+    """
 
     per_nanobody_components: dict
     final_boltzgen_scores: dict | None
 
 
 class InferenceResult(NamedTuple):
-    """Result of inference.main(). score_dict is updated in-place; use .boltz and .boltzgen to access wrapper-like attributes."""
+    """Result of inference.main(). Merges molecule scores in-place; nanobody ranking/merge is done by the validator."""
 
     boltz: BoltzResult | None
     boltzgen: BoltzgenResult | None
@@ -44,7 +48,7 @@ def infer_worker(gpu_id: int, payload: dict, inference_type: str) -> dict:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
     if inference_type == "boltz":
-        from boltz.boltz_wrapper import BoltzWrapper
+        from external_tools.boltz.boltz_wrapper import BoltzWrapper
         boltz = BoltzWrapper()
         boltz.score_molecules(payload["molecules"], payload["score_dict"], payload["config"])
         score_dict_updates = {
@@ -62,13 +66,12 @@ def infer_worker(gpu_id: int, payload: dict, inference_type: str) -> dict:
     elif inference_type == "boltzgen":
         from boltzgen.boltzgen_wrapper import BoltzgenWrapper
         boltzgen = BoltzgenWrapper()
-        final_boltzgen_scores, per_nanobody_components = boltzgen.score_nanobodies(
+        per_nanobody_components = boltzgen.run_nanobody_inference(
             payload["nanobodies"], payload["config"]
         )
         return {
             "gpu": gpu_id,
             "ok": True,
-            "boltzgen": final_boltzgen_scores,
             "per_nanobody_components": per_nanobody_components,
         }
     else:
@@ -120,9 +123,9 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
     """
     Run Boltz and/or Boltzgen inference, each on its own GPU when available.
 
-    - score_dict is updated in-place: molecule_scores (Boltz), nanobody_scores (Boltzgen).
-    - Returns InferenceResult(boltz=..., boltzgen=...) so the validator can use result.boltz / result.boltzgen
-      like the wrapper instances (e.g. result.boltz.per_molecule_components, etc).
+    Updates ``score_dict['molecule_scores']`` in-place. Nanobody inference fills
+    ``per_nanobody_components`` only; ranked ``nanobody_scores`` are applied later
+    by the caller (validator) after external score sharing.
     """
     run_boltz = bool(valid_molecules_by_uid)
     run_boltzgen = bool(valid_nanobodies_by_uid)
@@ -135,12 +138,10 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
     payload_boltz = {"molecules": valid_molecules_by_uid, "score_dict": score_dict, "config": config}
     payload_boltzgen = {"nanobodies": valid_nanobodies_by_uid, "config": config}
 
-    final_boltzgen_scores = None
     per_nanobody_components = None
     per_molecule_components = None
     unique_molecules = None
     ctx = mp.get_context("spawn")
-    rank_mode = getattr(config, "boltzgen_rank_mode", None) or getattr(config, "rank_mode", "min")
 
     if num_gpus >= 2 and run_boltz and run_boltzgen:
         with ctx.Pool(processes=2) as pool:
@@ -152,7 +153,6 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
         per_molecule_components = out_boltz.get("per_molecule_components") or {}
         unique_molecules = out_boltz.get("unique_molecules") or {}
         if out_boltzgen.get("ok"):
-            final_boltzgen_scores = out_boltzgen.get("boltzgen")
             per_nanobody_components = out_boltzgen.get("per_nanobody_components")
     else:
         with ctx.Pool(processes=1) as pool:
@@ -164,11 +164,8 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
             if run_boltzgen:
                 out = pool.apply_async(infer_worker, (0, payload_boltzgen, "boltzgen")).get()
                 if out.get("ok"):
-                    final_boltzgen_scores = out.get("boltzgen")
                     per_nanobody_components = out.get("per_nanobody_components")
 
-    _merge_boltzgen_into_score_dict(score_dict, final_boltzgen_scores, valid_nanobodies_by_uid, config, rank_mode=rank_mode)
-
     boltz = BoltzResult(per_molecule_components, unique_molecules) if run_boltz else None
-    boltzgen = BoltzgenResult(per_nanobody_components or {}, final_boltzgen_scores) if run_boltzgen else None
+    boltzgen = BoltzgenResult(per_nanobody_components or {}, None) if run_boltzgen else None
     return InferenceResult(boltz=boltz, boltzgen=boltzgen)

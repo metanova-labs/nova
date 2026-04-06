@@ -42,7 +42,7 @@ def validate_molecules_and_calculate_entropy(
         
         # Check for duplicate molecules in submission
         if len(data["molecules"]) != len(set(data["molecules"])):
-            bt.logging.error(f"UID={uid} submission contains duplicate molecules")
+            bt.logging.warning(f"UID={uid}: submission contains duplicate molecules")
             continue
             
         for molecule in data["molecules"]:
@@ -50,42 +50,43 @@ def validate_molecules_and_calculate_entropy(
                 # Check if reaction is allowed this epoch (if filtering enabled)
                 if config.get('random_valid_reaction') and not is_reaction_allowed(molecule, allowed_reaction):
                     bt.logging.warning(
-                        f"UID={uid}, molecule='{molecule}' uses disallowed reaction for this epoch (only {allowed_reaction} allowed)"
+                        f"UID={uid}: molecule='{molecule}' uses disallowed reaction for this epoch (only {allowed_reaction} allowed)"
                     )
                     break
 
-                # temporary: Always allow reactions 1 and 2, ignore config/random selection
-                # allowed_ok = is_reaction_allowed(molecule, "rxn:1") or is_reaction_allowed(molecule, "rxn:3")
-                # if not allowed_ok:
-                #     bt.logging.warning(
-                #         f"UID={uid}, molecule='{molecule}' uses disallowed reaction for this temporary window (only 1 or 3 allowed)"
-                #     )
-                #     break
+                elif not config.get('random_valid_reaction'):
+                    allowed_ok = [is_reaction_allowed(molecule, reaction) for reaction in config.get('allowed_reactions')]
+                    if len(allowed_ok) == 0:
+                        bt.logging.error(f"random_valid_reaction is false but no allowed reactions are specified. Check config/config.yaml")
+                        break
+                    if not any(allowed_ok):
+                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' uses disallowed reaction for this epoch (only {config.get('allowed_reactions')} allowed)")
+                        break
                 
                 smiles = get_smiles(molecule)
                 if not smiles:
-                    bt.logging.error(f"No valid SMILES found for UID={uid}, molecule='{molecule}'")
+                    bt.logging.warning(f"UID={uid}: no valid SMILES found for molecule='{molecule}'")
                     break
                 
                 if get_heavy_atom_count(smiles) < config['min_heavy_atoms']:
-                    bt.logging.warning(f"UID={uid}, molecule='{molecule}' has insufficient heavy atoms")
+                    bt.logging.warning(f"UID={uid}: molecule='{molecule}' has insufficient heavy atoms")
                     break
 
                 try:
                     mol = Chem.MolFromSmiles(smiles)
                     num_rotatable_bonds = Descriptors.NumRotatableBonds(mol)
                     if num_rotatable_bonds < config['min_rotatable_bonds'] or num_rotatable_bonds > config['max_rotatable_bonds']:
-                        bt.logging.warning(f"UID={uid}, molecule='{molecule}' has an invalid number of rotatable bonds")
+                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' has an invalid number of rotatable bonds")
                         break
                 except Exception as e:
-                    bt.logging.error(f"Molecule is not parseable by RDKit for UID={uid}, molecule='{molecule}': {e}")
+                    bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not parseable by RDKit: {e}")
                     break
                 
                 # Check if the molecule is unique for all target proteins
                 is_unique = True
                 for target in config['small_molecule_target']:
                     if not entry_unique_for_protein_hf(target, smiles, 'molecules'):
-                        bt.logging.warning(f"UID={uid}, molecule='{molecule}' is not unique for protein '{target}'")
+                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not unique for protein '{target}'")
                         is_unique = False
                         break
                 
@@ -95,7 +96,7 @@ def validate_molecules_and_calculate_entropy(
                 valid_smiles.append(smiles)
                 valid_names.append(molecule)
             except Exception as e:
-                bt.logging.error(f"Error validating molecule for UID={uid}, molecule='{molecule}': {e}")
+                bt.logging.warning(f"UID={uid}: error validating molecule='{molecule}': {e}")
                 break
             
         # Check for chemically identical molecules
@@ -107,10 +108,10 @@ def validate_molecules_and_calculate_entropy(
                     for inchikey, indices in identical_molecules.items():
                         molecule_names = [valid_names[idx] for idx in indices]
                         duplicate_names.append(f"{', '.join(molecule_names)} (same InChIKey: {inchikey})")
-                    bt.logging.warning(f"UID={uid} submission contains chemically identical molecules: {'; '.join(duplicate_names)}")
+                    bt.logging.warning(f"UID={uid}: submission contains chemically identical molecules: {'; '.join(duplicate_names)}")
                     continue 
             except Exception as e:
-                bt.logging.warning(f"Error checking for chemically identical molecules for UID={uid}: {e}")
+                bt.logging.warning(f"UID={uid}: error checking for chemically identical molecules: {e}")
                 continue
 
         # Calculate entropy if we have valid molecules
@@ -122,7 +123,7 @@ def validate_molecules_and_calculate_entropy(
                     valid_molecules_by_uid[uid] = {"smiles": valid_smiles, "names": valid_names}
                     score_dict[uid]["block_submitted"] = data["block_submitted"]               
                 except Exception as e:
-                    bt.logging.error(f"Error calculating entropy for UID={uid}: {e}")
+                    bt.logging.warning(f"UID={uid}: error calculating entropy: {e}")
                     continue
             else:
                 score_dict[uid]["entropy"] = None
