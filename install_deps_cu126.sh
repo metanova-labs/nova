@@ -11,34 +11,48 @@ source "$HOME/.cargo/env"
 
 # Install system build/env tools (Ubuntu/Debian):
 sudo apt update && sudo apt install -y build-essential
-sudo apt install -y python3.12-venv
+sudo apt install -y python3.10-venv
+
+# install hmmer and mmseqs2
+sudo apt install -y hmmer
+wget https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz; tar xvfz mmseqs-linux-avx2.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
+
+# install igblast
+wget -q https://ftp.ncbi.nih.gov/blast/executables/igblast/release/LATEST/ncbi-igblast-1.22.0-x64-linux.tar.gz -O external_tools/igblast.tar.gz
+tar -xzf external_tools/igblast.tar.gz -C external_tools/
+mv external_tools/ncbi-igblast-1.22.0 external_tools/igblast
+rm external_tools/igblast.tar.gz
+
+# copy custom data to external_tools
+cp -r data/igblast_internal_data/camelid external_tools/igblast/internal_data/
+cp -r data/igblast_database/database external_tools/igblast
 
 # Check if .venv and timelock exist and delete them if they do (for reinstalling)
 [ -d .venv ] && rm -rf .venv
-[ -d timelock ] && rm -rf timelock
+[ -d external_tools/timelock ] && rm -rf external_tools/timelock
 
 # Clone timelock at specific commit:
+cd external_tools
 git clone https://github.com/ideal-lab5/timelock.git
 cd timelock
 git checkout 23fe963f17175e413b7434180d2d0d0776722f1f
-cd ..
+cd ../..
 
-
-# Create and activate virtual environment
-uv venv --python python3.12 && source .venv/bin/activate \
+# Create and activate virtual environment (for main process)
+uv venv --python python3.10 && source .venv/bin/activate \
         && uv pip install -r requirements/requirements.txt \
         && uv pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126 \
         && uv pip install patchelf \
         && uv pip install maturin==1.8.3 \
-        && cd boltz && uv pip install -e . \
-        && cd .. && cd boltzgen && uv pip install -e . \
-        && cd ..
+        && cd external_tools/boltz && uv pip install -e . \
+        && cd ../.. && cd external_tools/boltzgen && uv pip install -e . \
+        && cd ../..
 
 # Build timelock Python bindings (WASM)
-export PYO3_CROSS_PYTHON_VERSION="3.12" && cd timelock/wasm && ./wasm_build_py.sh && cd ../..
+export PYO3_CROSS_PYTHON_VERSION="3.10" && cd external_tools/timelock/wasm && ./wasm_build_py.sh && cd ../../..
 
 # Build timelock Python package:
-cd timelock/py && uv pip install --upgrade build && python3.12 -m build
+cd external_tools/timelock/py && uv pip install --upgrade build && python3.10 -m build
 uv pip install timelock
 
 echo "Installation complete."
