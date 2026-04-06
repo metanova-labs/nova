@@ -17,7 +17,7 @@ pdbfixer==1.12.0
 promb==1.0.2
 python-dotenv==1.0.1
 rdkit==2024.9.4
-requests>=2.32.4
+requests>=2.33.0
 substrate-interface==1.7.11
 scikit-learn==1.6.1
 pytorch-lightning==2.5.5
