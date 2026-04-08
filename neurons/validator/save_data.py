@@ -98,9 +98,11 @@ def _build_molecule_details(
     names_list: list[str],
     score_dict: dict,
     boltz,
+    target_proteins: list[str],
 ) -> list[dict]:
     """Build per-molecule detail dicts for a single submission."""
-    targets = score_dict.get(uid, {}).get('target_scores', [])
+    mol_scores = score_dict.get(uid, {}).get('molecule_scores', [])
+    protein_to_idx = {p: i for i, p in enumerate(target_proteins)}
 
     molecule_details = []
     for idx in range(len(smiles_list)):
@@ -113,16 +115,12 @@ def _build_molecule_details(
 
             per_molecule_components = getattr(boltz, 'per_molecule_components', None)
             if per_molecule_components:
-                # per_molecule_components[uid][smiles] = {protein_name: {metric: value}}
                 comp = per_molecule_components.get(uid, {}).get(smiles_list[idx], {})
         except Exception:
             per_mol_boltz = None
             comp = {}
 
-        # Build one entry per target protein for this molecule.
-        # comp is {protein_name: {metric: value, ...}, ...} when multi-target,
         if comp and not isinstance(next(iter(comp.values()), None), dict):
-            # Already flat (single-target legacy shape) — wrap with protein="unknown"
             comp = {"unknown": comp}
 
         per_protein_entries = []
@@ -136,11 +134,17 @@ def _build_molecule_details(
                 if isinstance(v, dict):
                     return _to_json_safe(v)
 
+            target_idx = protein_to_idx.get(protein_name)
+            if target_idx is not None and target_idx < len(mol_scores) and idx < len(mol_scores[target_idx]):
+                final_score = _safe_num(mol_scores[target_idx][idx])
+            else:
+                final_score = None
+
             per_protein_entries.append({
                 "protein_name": protein_name,
                 "name": names_list[idx],
                 "smiles": smiles_list[idx],
-                "target_scores": [_safe_num(s) for s in ([t[idx] for t in targets] if targets else [])],
+                "final_score": final_score,
                 # --- structural metrics (per target) ---
                 "affinity_probability_binary": _get("affinity_probability_binary"),
                 "affinity_pred_value": _get("affinity_pred_value"),
@@ -221,6 +225,7 @@ def _build_nanobody_details(
                 "confidence_rank": _get(f"confidence_{boltzgen_rank_by}"),
                 "physical_interaction_rank": _get(f"physical_interaction_{boltzgen_rank_by}"),
                 "developability_rank": _get(f"developability_{boltzgen_rank_by}"),
+                "final_score": _get(f"{boltzgen_rank_by}"),
             }
 
         # --- Target-invariant: developability ---
@@ -324,6 +329,7 @@ def _build_submissions_payload(
             molecule_details = _build_molecule_details(
                 uid, smiles_list, names_list,
                 score_dict, boltz,
+                target_proteins=config.get('small_molecule_target', []) if isinstance(config, dict) else getattr(config, 'small_molecule_target', []),
             )
 
         # --- Nanobody data ---

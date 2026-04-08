@@ -196,8 +196,8 @@ async def apply_external_scores(
             )
 
         # --- Enrich molecule entries with final calculated score ---
-        # score_dict[uid]['target_scores'] is list[list[float]]:
-        #   target_scores[target_idx][molecule_idx] where target ordering
+        # score_dict[uid]['molecule_scores'] is list[list[float]]:
+        #   molecule_scores[target_idx][molecule_idx] where target ordering
         #   matches the target_proteins list.
         if molecule_validations and target_proteins:
             protein_to_idx = {p: i for i, p in enumerate(target_proteins)}
@@ -205,7 +205,7 @@ async def apply_external_scores(
             # Build lookup: (mol_name, protein_name) -> score
             mol_score_lookup: Dict[Tuple[str, str], float] = {}
             for uid in score_dict:
-                targets = score_dict[uid].get('target_scores', [])
+                targets = score_dict[uid].get('molecule_scores', [])
                 mol_data = valid_molecules_by_uid.get(uid, {})
                 names_list = mol_data.get('names', []) or []
                 for protein_name, target_idx in protein_to_idx.items():
@@ -360,7 +360,7 @@ async def apply_external_scores(
                     mol_data = valid_molecules_by_uid.get(uid, {})
                     names_list = mol_data.get('names', []) or []
                     name_to_mol_idx = {n: i for i, n in enumerate(names_list)}
-                    uid_targets = score_dict.get(uid, {}).get('target_scores', [])
+                    uid_targets = score_dict.get(uid, {}).get('molecule_scores', [])
 
                     for name, smiles in id_item_map.items():
                         averaged = name_to_target_avgs.get(name)
