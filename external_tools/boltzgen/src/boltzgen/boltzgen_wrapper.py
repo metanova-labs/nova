@@ -293,7 +293,7 @@ class BoltzgenWrapper:
     def _inject_category_ranks_into_components(self, ranked: pd.DataFrame) -> None:
         """Write category rank values from the ranked DataFrame back into per_nanobody_components."""
         categories = list(self.boltzgen_config['metrics'].keys())
-        rank_cols = []
+        rank_cols = ['rank_sum', 'worst_rank']
         for cat in categories:
             for suffix in ['rank_sum', 'worst_rank']:
                 col = f"{cat}_{suffix}"
