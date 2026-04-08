@@ -152,8 +152,13 @@ properties:
          # update score_dict with scores that will be used for ranking
         for uid, data in score_dict.items():
             if uid in self.final_boltz_scores:
+                smiles_list = []
+                for smiles, id_list in self.unique_molecules.items():
+                    if any(u == uid for u, _ in id_list):
+                        smiles_list.append(smiles)
+                sentinel = math.inf if self.subnet_config['boltz_mode'] == "min" else -math.inf
                 data['molecule_scores'] = [
-                    [self.final_boltz_scores[uid][target]] 
+                    [self.final_boltz_scores[uid].get(target, {}).get(s, sentinel) for s in smiles_list]
                     for target in self.subnet_config['small_molecule_target']
                 ]
             else:
@@ -247,7 +252,7 @@ properties:
                         final_score_target = scores[mol_idx][target].get(self.subnet_config['boltz_metric'][0],
                                                                          math.inf if self.subnet_config['boltz_mode'] == "min" else -math.inf)
 
-                    self.final_boltz_scores[uid][target] = final_score_target
+                    self.final_boltz_scores[uid].setdefault(target, {})[smiles] = final_score_target
 
                     # save all components for later use
                     metrics = scores[mol_idx][target]
