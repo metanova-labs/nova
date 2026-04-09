@@ -7,7 +7,7 @@ protein_selection:
 competition:
   # No submission blocks
   no_submission_blocks: 10
-  nanobody_weight: 0.1 # proportion of incentive to give to nanobody winner
+  nanobody_weight: 0.2 # proportion of incentive to give to nanobody winner
 
 # Molecular property requirements
 molecule_requirements:
