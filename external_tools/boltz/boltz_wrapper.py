@@ -62,7 +62,7 @@ sequences:
   - protein:
       id: A
       sequence: {protein_sequence}
-      msa: {os.path.join(self.base_dir, "external_tools", "boltz", "msa_files", target + ".a3m")}
+      msa: {os.path.join(self.base_dir, "data", "msa_files", target + ".a3m")}
   - ligand:
       id: B
       smiles: {ligand_smiles}

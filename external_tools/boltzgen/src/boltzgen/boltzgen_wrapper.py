@@ -105,15 +105,17 @@ class BoltzgenWrapper:
         bt.logging.debug(f"Unique sequences: {unique_sequences}")
         return unique_sequences
 
-    def _create_yaml_content(self, design_sequence: str, target_sequence: str) -> str:
+    def _create_yaml_content(self, design_sequence: str, target_sequence: str, target: str) -> str:
         """Create YAML content for Boltzgen prediction."""
         return f"""entities:
 - protein:
     id: A
     sequence: "{target_sequence}"
+    msa: {os.path.join(NOVA_DIR, 'data', 'msa_files', target + '.a3m')}
 - protein:
     id: B
     sequence: "{design_sequence}"
+    msa: empty
 """
 
     def _write_yaml_files(self):
@@ -121,7 +123,7 @@ class BoltzgenWrapper:
         for target in self.subnet_config['nanobody_target']:
             protein_sequence = get_sequence_from_protein_code(target)
             for seq, ids in self.unique_sequences.items():
-                yaml_content = self._create_yaml_content(seq, protein_sequence)
+                yaml_content = self._create_yaml_content(seq, protein_sequence, target)
                 record_id = seq_hash(seq)
                 yaml_path = os.path.join(self.input_dir, f"{record_id}_{target}_input.yaml")
                 with open(yaml_path, "w") as f:
