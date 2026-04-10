@@ -107,32 +107,33 @@ async def validate_nanobodies(
         for target in config["nanobody_target"]:
             search_engine = search_engines[target]
             similarity_results = []
-            similarity_check_failed = False
+            if search_engine is not None:
+                similarity_check_failed = False
 
-            for seq in normalized_sequences:
-                try:
-                    similarity_result = search_engine.search(
-                        seq,
-                        include_alignment=True,
-                        exclude_ids=None,
-                        coarse_min_shared=None,
-                        coarse_jaccard=None,
-                    )
-                    similarity_results.append(similarity_result)
-                except Exception as e:
-                    bt.logging.warning(f"UID {uid}: error searching for similarity: {e}")
-                    similarity_check_failed = True
+                for seq in normalized_sequences:
+                    try:
+                        similarity_result = search_engine.search(
+                            seq,
+                            include_alignment=True,
+                            exclude_ids=None,
+                            coarse_min_shared=None,
+                            coarse_jaccard=None,
+                        )
+                        similarity_results.append(similarity_result)
+                    except Exception as e:
+                        bt.logging.warning(f"UID {uid}: error searching for similarity: {e}")
+                        similarity_check_failed = True
+                        break
+
+                if similarity_check_failed:
+                    bt.logging.warning(f"UID {uid}: contains sequences that failed the similarity check")
+                    uid_invalid = True
                     break
 
-            if similarity_check_failed:
-                bt.logging.warning(f"UID {uid}: contains sequences that failed the similarity check")
-                uid_invalid = True
-                break
-
-            if any(is_duplicate(m) for result in similarity_results for m in result.matches):
-                bt.logging.warning(f"UID {uid}: contains sequences too similar to a top sequence for this target")
-                uid_invalid = True
-                break
+                if any(is_duplicate(m) for result in similarity_results for m in result.matches):
+                    bt.logging.warning(f"UID {uid}: contains sequences too similar to a top sequence for this target")
+                    uid_invalid = True
+                    break
 
         if uid_invalid:
             continue
@@ -172,7 +173,7 @@ async def validate_nanobodies(
             "hashes": submission_hashes,
             "developability_result": developability_result,
             "nativeness_result": nativeness_result,
-            "similarity_results": similarity_results,
+            "similarity_results": similarity_results if similarity_results else [],
         }
 
     return valid_nanobodies_by_uid

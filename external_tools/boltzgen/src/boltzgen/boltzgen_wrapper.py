@@ -120,8 +120,8 @@ class BoltzgenWrapper:
 
     def _write_yaml_files(self):
         """Write YAML input files for each unique sequence and target."""
-        for target in self.subnet_config['nanobody_target']:
-            protein_sequence = get_sequence_from_protein_code(target)
+        for target, clip_interval in zip(self.subnet_config['nanobody_target'], self.subnet_config['nanobody_target_clip_interval']):
+            protein_sequence = get_sequence_from_protein_code(target, clip_interval)
             for seq, ids in self.unique_sequences.items():
                 yaml_content = self._create_yaml_content(seq, protein_sequence, target)
                 record_id = seq_hash(seq)

@@ -158,12 +158,13 @@ def index_top_sequences(target: str, n: int = 50) -> SearchEngine:
         top_sequences = rank_binders(top_sequences, k=50, max_liability_violations=50)
         top_sequences = top_sequences.head(n)[['sequence', 'sequence_hash']]
     except EntryNotFoundError:
-        pass
+        return None
     except Exception as e:
         bt.logging.warning(
             f"Could not download existing {target}_nanobodies_TEST.csv from Metanova/Submission-Archive: {e}"
         )
-
+        return None
+        
     for seq, seq_id in top_sequences.values:
         kmers = generate_kmers(seq, k=search_config.k)
         cdrs = extract_cdrs(seq)
