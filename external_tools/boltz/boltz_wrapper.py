@@ -62,7 +62,7 @@ sequences:
   - protein:
       id: A
       sequence: {protein_sequence}
-      msa: {os.path.join(self.base_dir, "data", "msa_files", target + ".a3m")}
+      msa: {os.path.join(self.base_dir, 'data', 'msa_files', target + '.a3m')}
   - ligand:
       id: B
       smiles: {ligand_smiles}
@@ -93,8 +93,8 @@ properties:
 
         bt.logging.info(f"Writing {len(self.unique_molecules)*len(self.subnet_config['small_molecule_target'])} unique molecules to input directory")
         try:
-            for target in self.subnet_config['small_molecule_target']:
-                protein_sequence = get_sequence_from_protein_code(target)
+            for target, clip_interval in zip(self.subnet_config['small_molecule_target'], self.subnet_config['small_molecule_target_clip_interval']):
+                protein_sequence = get_sequence_from_protein_code(target, clip_interval)
                 for smiles, ids in self.unique_molecules.items():
                     yaml_content = self._create_yaml_content(target, protein_sequence, smiles)
                     with open(os.path.join(self.input_dir, f"{ids[0][1]}_{target}.yaml"), "w") as f:

@@ -12,8 +12,10 @@ def load_config(path: str = "config/config.yaml"):
         config = yaml.safe_load(f)
 
     # Load configuration options
-    small_molecule_target = config["protein_selection"]["small_molecule_target"].split(",")
-    nanobody_target = config["protein_selection"]["nanobody_target"].split(",")
+    small_molecule_target = config["protein_selection"]["small_molecule"]["target"].split(",")
+    small_molecule_target_clip_interval = [tuple(interval) if interval else None for interval in config["protein_selection"]["small_molecule"]["clip_interval"]]
+    nanobody_target = config["protein_selection"]["nanobody"]["target"].split(",")
+    nanobody_target_clip_interval = [tuple(interval) if interval else None for interval in config["protein_selection"]["nanobody"]["clip_interval"]]
 
     no_submission_blocks = config["competition"]["no_submission_blocks"]
     nanobody_weight = config["competition"]["nanobody_weight"]
@@ -60,7 +62,9 @@ def load_config(path: str = "config/config.yaml"):
 
     return {
         'small_molecule_target': small_molecule_target,
+        'small_molecule_target_clip_interval': small_molecule_target_clip_interval,
         'nanobody_target': nanobody_target,
+        'nanobody_target_clip_interval': nanobody_target_clip_interval,
         'no_submission_blocks': no_submission_blocks,
         'nanobody_weight': nanobody_weight,
         'min_heavy_atoms': min_heavy_atoms,
