@@ -46,7 +46,7 @@ nanobody_requirements:
   sp_window: 12
   sp_hydro_min_in_window: 8 # >=8 hydrophobic in a 12-aa window
   sp_scan_prefix: 30 # length of N term sequence to scan for signal peptide
-  min_nativeness_score: 0.8
+  min_nativeness_score: 0.45
   min_human_framework_score: 0.75
   max_similarity_score: 0.95 # maximum similarity score to top sequences for that target (calculated by metanano.search.search_engine)
   num_top_sequences: 50 # number of top sequences to consider for similarity check
