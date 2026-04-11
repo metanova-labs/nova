@@ -27,7 +27,7 @@ async def validate_nanobodies(
     Validate nanobodies and return a dictionary of valid nanobodies by uid
     """
     
-    valid_nanobodies_by_uid = {}
+    pre_validated = {}
 
     # index top sequences for all targets
     search_engines = {}
@@ -138,42 +138,96 @@ async def validate_nanobodies(
         if uid_invalid:
             continue
 
-        # nativeness/humanness check
-        try:
-            nativeness_result = compute_igblast_nativeness({sid: seq for sid, seq in zip(submission_hashes, normalized_sequences)})
-            bt.logging.debug(f"UID {uid}: nativeness/humanness results: {nativeness_result}")
-        except Exception as e:
-            bt.logging.warning(f"UID {uid}: error computing IgBLAST nativeness/humanness: {e}")
-            continue
-
-        if any(result.vhh_nativeness < config["min_nativeness_score"] for result in nativeness_result):
-            low_nativeness_sequences = [seq for seq, result in zip(normalized_sequences, nativeness_result) if result.vhh_nativeness < config["min_nativeness_score"]]
-            bt.logging.warning(f"UID {uid}: contains sequences that are low in nativeness score: {low_nativeness_sequences}")
-            continue
-        if any(result.human_framework < config["min_human_framework_score"] for result in nativeness_result):
-            low_human_framework_sequences = [seq for seq, result in zip(normalized_sequences, nativeness_result) if result.human_framework < config["min_human_framework_score"]]
-            bt.logging.warning(f"UID {uid}: contains sequences that are low in human framework score: {low_human_framework_sequences}")
-            continue
-
-        # developability check
-        try:
-            developability_result = await analyze_developability(normalized_sequences)
-            bt.logging.debug(f"UID {uid}: developability results: {developability_result}")
-            rejected_sequences = [seq for seq, result in zip(normalized_sequences, developability_result) if not result["passed"]]
-            if rejected_sequences:
-                bt.logging.warning(f"UID {uid}: contains sequences that are not developable: {rejected_sequences}")
-                continue
-        except Exception as e:
-            bt.logging.warning(f"UID {uid}: error analyzing developability: {e}")
-            continue
-
-    
-        valid_nanobodies_by_uid[uid] = {
+        pre_validated[uid] = {
             "sequences": normalized_sequences,
             "hashes": submission_hashes,
-            "developability_result": developability_result,
-            "nativeness_result": nativeness_result,
             "similarity_results": similarity_results if similarity_results else [],
+        }
+
+    # --- batch nativeness check across all surviving UIDs ---
+    if not pre_validated:
+        return {}
+
+    all_nativeness_seqs = {}
+    for uid, info in pre_validated.items():
+        for h, seq in zip(info["hashes"], info["sequences"]):
+            all_nativeness_seqs[h] = seq
+
+    results_by_id = {}
+    try:
+        all_nativeness_results = compute_igblast_nativeness(all_nativeness_seqs)
+        results_by_id = {r.sequence_id: r for r in all_nativeness_results}
+    except Exception as e:
+        bt.logging.warning(f"Batch IgBLAST failed ({e}), falling back to per-UID")
+        for uid, info in pre_validated.items():
+            try:
+                uid_results = compute_igblast_nativeness(
+                    {h: seq for h, seq in zip(info["hashes"], info["sequences"])}
+                )
+                for r in uid_results:
+                    results_by_id[r.sequence_id] = r
+            except Exception as e2:
+                bt.logging.warning(f"UID {uid}: IgBLAST failed ({e2}), rejecting")
+
+    post_nativeness = {}
+    for uid, info in pre_validated.items():
+        nativeness_result = [results_by_id.get(h) for h in info["hashes"]]
+        if any(r is None for r in nativeness_result):
+            bt.logging.warning(f"UID {uid}: missing IgBLAST results, rejecting")
+            continue
+
+        bt.logging.debug(f"UID {uid}: nativeness/humanness results: {nativeness_result}")
+
+        if any(r.vhh_nativeness < config["min_nativeness_score"] for r in nativeness_result):
+            low = [seq for seq, r in zip(info["sequences"], nativeness_result) if r.vhh_nativeness < config["min_nativeness_score"]]
+            bt.logging.warning(f"UID {uid}: contains sequences that are low in nativeness score: {low}")
+            continue
+        if any(r.human_framework < config["min_human_framework_score"] for r in nativeness_result):
+            low = [seq for seq, r in zip(info["sequences"], nativeness_result) if r.human_framework < config["min_human_framework_score"]]
+            bt.logging.warning(f"UID {uid}: contains sequences that are low in human framework score: {low}")
+            continue
+
+        post_nativeness[uid] = {
+            **info,
+            "nativeness_result": nativeness_result,
+        }
+
+    # --- batch developability check across all nativeness-passing UIDs ---
+    if not post_nativeness:
+        return {}
+
+    all_dev_sequences = []
+    uid_seq_counts = []
+    for uid, info in post_nativeness.items():
+        seqs = info["sequences"]
+        uid_seq_counts.append((uid, len(seqs)))
+        all_dev_sequences.extend(seqs)
+
+    try:
+        all_dev_results = await analyze_developability(all_dev_sequences)
+    except Exception as e:
+        bt.logging.warning(f"Batch developability analysis failed: {e}")
+        return {}
+
+    valid_nanobodies_by_uid = {}
+    offset = 0
+    for uid, count in uid_seq_counts:
+        info = post_nativeness[uid]
+        developability_result = all_dev_results[offset : offset + count]
+        offset += count
+
+        bt.logging.debug(f"UID {uid}: developability results: {developability_result}")
+        rejected_sequences = [seq for seq, result in zip(info["sequences"], developability_result) if not result["passed"]]
+        if rejected_sequences:
+            bt.logging.warning(f"UID {uid}: contains sequences that are not developable: {rejected_sequences}")
+            continue
+
+        valid_nanobodies_by_uid[uid] = {
+            "sequences": info["sequences"],
+            "hashes": info["hashes"],
+            "developability_result": developability_result,
+            "nativeness_result": info["nativeness_result"],
+            "similarity_results": info["similarity_results"],
         }
 
     return valid_nanobodies_by_uid
