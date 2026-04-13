@@ -143,9 +143,6 @@ properties:
     def _postprocess_data(self, score_dict: dict) -> None:
         scores = self._collect_scores()
 
-        if self.config['remove_files']:
-            self._cleanup_files()
-
         self._distribute_scores(scores) 
         bt.logging.debug(f"final_boltz_scores: {self.final_boltz_scores}")
 
@@ -244,14 +241,19 @@ properties:
             for uid, mol_idx in id_list:
                 if uid not in self.final_boltz_scores:
                     self.final_boltz_scores[uid] = {}
-                    
-                for target in self.subnet_config['small_molecule_target']:
-                    if len(self.subnet_config['boltz_metric']) > 1:
-                        final_score_target = self._combine_boltz_scores(scores[mol_idx][target], smiles, heavy_atom_count)
-                    else:
-                        final_score_target = scores[mol_idx][target].get(self.subnet_config['boltz_metric'][0],
-                                                                         math.inf if self.subnet_config['boltz_mode'] == "min" else -math.inf)
 
+                for target in self.subnet_config['small_molecule_target']:
+                    target_scores = scores[mol_idx][target]
+                    required_keys = self.subnet_config['boltz_metric']
+                    if not all(k in target_scores for k in required_keys):
+                        bt.logging.warning(f"Missing metrics for mol_idx={mol_idx}, target={target}. Available keys: {list(target_scores.keys())}")
+                        sentinel = math.inf if self.subnet_config['boltz_mode'] == "min" else -math.inf
+                        final_score_target = sentinel
+                    elif len(required_keys) > 1:
+                        final_score_target = self._combine_boltz_scores(target_scores, smiles, heavy_atom_count)
+                    else:
+                        final_score_target = target_scores.get(required_keys[0], 
+                                            math.inf if self.subnet_config['boltz_mode'] == "min" else -math.inf)
                     self.final_boltz_scores[uid].setdefault(target, {})[smiles] = final_score_target
 
                     # save all components for later use
