@@ -160,8 +160,6 @@ def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], config
             winner_block = score_dict[best_uids[0]].get('block_submitted')
             current_epoch = winner_block // 361 if winner_block else None
             bt.logging.info(f"Epoch {current_epoch} {item_type} winner: UID={best_uids[0]}, winning_score={best_score}")
-            winner = best_uids[0]
-        else:
             winner = tie_breaker(best_uids, best_score, item_type, print_message=True)
     else:
         winner = None

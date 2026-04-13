@@ -3,7 +3,8 @@ from .molecules import (
     get_heavy_atom_count, 
     compute_maccs_entropy,
     find_chemically_identical,
-    is_boltz_safe_smiles
+    is_boltz_safe_smiles,
+    contains_atom_type
 )
 from .proteins import get_sequence_from_protein_code
 from .files import upload_file_to_github, read_local_input_file

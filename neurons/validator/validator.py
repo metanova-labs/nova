@@ -126,10 +126,10 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             config=config
         )
 
+        test_mode = bool(getattr(config, 'test_mode', False))
         external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
-        #if external_api_url and not test_mode:
-        if True:
-            external_api_key = os.environ.get('VALIDATOR_API_KEY')
+        external_api_key = os.environ.get('VALIDATOR_API_KEY')
+        if external_api_url and not test_mode:
             score_dict = await apply_external_scores(
                 score_dict=score_dict,
                 valid_molecules_by_uid=valid_molecules_by_uid,
@@ -143,6 +143,12 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 epoch_end_block=current_block,
                 test_mode=True,
             )
+            boltz_score_averages = {
+                uid: round(data.get('boltz_score'), 6)
+                for uid, data in score_dict.items()
+                if data.get('boltz_score') is not None
+            }
+            bt.logging.debug(f"boltz_score_averages: {boltz_score_averages}")
 
         # update scores for nanobodies
         if valid_nanobodies_by_uid and boltzgen and boltzgen.per_nanobody_components:

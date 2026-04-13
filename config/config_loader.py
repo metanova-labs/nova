@@ -70,6 +70,7 @@ def load_config(path: str = "config/config.yaml"):
         'min_heavy_atoms': min_heavy_atoms,
         'min_rotatable_bonds': min_rotatable_bonds,
         'max_rotatable_bonds': max_rotatable_bonds,
+        'banned_atom_types': banned_atom_types,
         'num_molecules': num_molecules,
         'min_entropy': min_entropy,
         'random_valid_reaction': random_valid_reaction,
