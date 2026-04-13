@@ -6,81 +6,81 @@ import sys
 import bittensor as bt
 import torch
 import gc
+import traceback
+import multiprocessing as mp
+import shutil
+from pathlib import Path
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(BASE_DIR)
 
 from auto_updater import AutoUpdater
-from btdr import QuicknetBittensorDrandTimelock
 from config.config_loader import load_config
-from PSICHIC.wrapper import PsichicWrapper
-from boltz.wrapper import BoltzWrapper
 
-from utils import get_challenge_params_from_blockhash
+from utils import get_challenge_params_from_blockhash, inference, QuicknetBittensorDrandTimelock
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
-from neurons.validator.validity import validate_molecules_and_calculate_entropy, count_molecule_names
-from neurons.validator.scoring import score_all_proteins_psichic
-import neurons.validator.scoring as scoring_module
-from neurons.validator.ranking import calculate_final_scores, determine_winner
+from neurons.validator.molecule_validity import validate_molecules_and_calculate_entropy
+from neurons.validator.nanobody_validity import validate_nanobodies
+from neurons.validator.ranking import calculate_scores_for_type, determine_winner
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
 from neurons.validator.score_sharing import apply_external_scores
+from boltzgen.boltzgen_wrapper import BoltzgenWrapper
+
+try:
+    from prot_viz_pkg.run import main as run_protein_viz
+except Exception as e:
+    bt.logging.info(f"protein viz package not found, skipping")
 
 # Initialize global components (lazy loading for models)
-psichic = None
 boltz = None
+boltzgen = None
 btd = QuicknetBittensorDrandTimelock()
 GITHUB_HEADERS = {}
-scoring_module.BASE_DIR = BASE_DIR
-
-def reset_cuda_context():
-    """Reset CUDA context to allow new processes to initialize."""
-    if torch.cuda.is_available():
-        # Clear all CUDA caches
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        # Reset memory stats
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.reset_accumulated_memory_stats()
-        # Force garbage collection
-        gc.collect()
-        # Small delay to ensure cleanup completes
-        import time
-        time.sleep(0.1)
 
 async def process_epoch(config, current_block, metagraph, subtensor, wallet):
     """
     Process a single epoch end-to-end.
     """
-    global psichic, boltz
+    global boltz
+    test_mode = bool(getattr(config, 'test_mode', False))
     try:
         start_block = current_block - config.epoch_length
         start_block_hash = await subtensor.determine_block_hash(start_block)
         final_block_hash = await subtensor.determine_block_hash(current_block)
         current_epoch = (current_block // config.epoch_length) - 1
 
+        bt.logging.info(f"Epoch {current_epoch} scoring started.")
+
         # Get challenge parameters for this epoch
         challenge_params = get_challenge_params_from_blockhash(
             block_hash=start_block_hash,
-            weekly_target=config.weekly_target,
-            num_antitargets=config.num_antitargets,
+            small_molecule_target=config.small_molecule_target,
+            nanobody_target=config.nanobody_target,
             include_reaction=config.random_valid_reaction,
         )
-        target_proteins = challenge_params["targets"]
-        antitarget_proteins = challenge_params["antitargets"]
-        allowed_reaction = challenge_params.get("allowed_reaction")
+        if challenge_params:
+            small_molecule_target = challenge_params.get("small_molecule_target")
+            nanobody_target = challenge_params.get("nanobody_target")
+            allowed_reaction = challenge_params.get("allowed_reaction")
+        else:
+            bt.logging.error("Failed to get challenge parameters from blockhash.")
+            return None
 
         if allowed_reaction:
             bt.logging.info(f"Allowed reaction this epoch: {allowed_reaction}")
 
-        bt.logging.info(f"Scoring using target proteins: {target_proteins}, antitarget proteins: {antitarget_proteins}")
+        bt.logging.info(f"Scoring using small molecule target: {small_molecule_target} and nanobody target: {nanobody_target}")
 
-        # Gather and decrypt commitments
-        uid_to_data, current_commitments, decrypted_submissions, push_timestamps = await gather_and_decrypt_commitments(
-            subtensor, metagraph, config.netuid, start_block, current_block, config.no_submission_blocks, GITHUB_HEADERS, btd
-        )
+        if not config.local_input_file:
+            uid_to_data, current_commitments, decrypted_submissions, push_timestamps = await gather_and_decrypt_commitments(
+                subtensor, metagraph, config.netuid, start_block, current_block, config, GITHUB_HEADERS, btd
+            )
+        else:
+            from utils import read_local_input_file
+            uid_to_data = await read_local_input_file(config.local_input_file, config, subtensor)
 
         if not uid_to_data:
             bt.logging.info("No valid submissions found this epoch.")
@@ -89,17 +89,16 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # Initialize scoring structure
         score_dict = {
             uid: {
-                "target_scores": [[] for _ in range(len(target_proteins))],
-                "antitarget_scores": [[] for _ in range(len(antitarget_proteins))],
+                "molecule_scores": [[] for _ in range(len(small_molecule_target))],
+                "nanobody_scores": [[] for _ in range(len(nanobody_target))],
                 "entropy": None,
-                "entropy_boltz": None,
                 "block_submitted": None,
                 "push_time": uid_to_data[uid].get("push_time", '')
             }
             for uid in uid_to_data
         }
 
-        # Validate molecules and calculate entropy
+        # Validate submissions
         valid_molecules_by_uid = validate_molecules_and_calculate_entropy(
             uid_to_data=uid_to_data,
             score_dict=score_dict,
@@ -107,44 +106,24 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             allowed_reaction=allowed_reaction
         )
 
-        # Count molecule name occurrences
-        molecule_name_counts = count_molecule_names(valid_molecules_by_uid)
-
-        # Initialize and use PSICHIC model
-        if psichic is None:
-            psichic = PsichicWrapper()
-            scoring_module.psichic = psichic
-            bt.logging.info("PSICHIC model initialized successfully")
-        
-        # Score all target proteins then all antitarget proteins one protein at a time
-        score_all_proteins_psichic(
-            target_proteins=target_proteins,
-            antitarget_proteins=antitarget_proteins,
-            score_dict=score_dict,
-            valid_molecules_by_uid=valid_molecules_by_uid,
+        valid_nanobodies_by_uid = await validate_nanobodies(
             uid_to_data=uid_to_data,
-            batch_size=32
+            score_dict=score_dict,
+            config=config,
         )
 
-        # Clean up PSICHIC model to free GPU memory
-        psichic.cleanup_model()
-        psichic = None
-        scoring_module.psichic = None
-        
-        # Reset CUDA context to allow Boltz to initialize properly
-        bt.logging.info("Resetting CUDA context for Boltz initialization...")
-        reset_cuda_context()
-        
-        # Initialize and use Boltz model
-        if boltz is None:
-            bt.logging.info("Initializing Boltz model...")
-            boltz = BoltzWrapper()
-            bt.logging.info("Boltz model initialized successfully")
-        
-        boltz.score_molecules_target(valid_molecules_by_uid, score_dict, config, final_block_hash)
+        result = inference.main(valid_molecules_by_uid, valid_nanobodies_by_uid, score_dict, config)
+        boltz = result.boltz
+        boltzgen = result.boltzgen
 
-        score_dict = calculate_final_scores(
-            score_dict, valid_molecules_by_uid, molecule_name_counts, config, current_epoch
+        # update score_dict for molecules 
+        # (before external score sharing because averaging final scores and components is equivalent)
+        # nanobody final scores are calculated after score sharing
+        score_dict = calculate_scores_for_type(
+            score_dict=score_dict,
+            valid_items_by_uid=valid_molecules_by_uid,
+            item_type="molecule",
+            config=config
         )
 
         test_mode = bool(getattr(config, 'test_mode', False))
@@ -154,12 +133,15 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             score_dict = await apply_external_scores(
                 score_dict=score_dict,
                 valid_molecules_by_uid=valid_molecules_by_uid,
+                valid_nanobodies_by_uid=valid_nanobodies_by_uid,
                 api_url=external_api_url,
                 api_key=external_api_key,
                 epoch=current_epoch,
-                boltz_per_molecule=getattr(boltz, "per_molecule_metric", None) if boltz is not None else None,
+                boltz=boltz,
+                boltzgen=boltzgen,
                 subtensor=subtensor,
-                epoch_end_block=current_block + config.epoch_length,
+                epoch_end_block=current_block,
+                test_mode=True,
             )
             boltz_score_averages = {
                 uid: round(data.get('boltz_score'), 6)
@@ -168,9 +150,32 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             }
             bt.logging.debug(f"boltz_score_averages: {boltz_score_averages}")
 
+        # update scores for nanobodies
+        if valid_nanobodies_by_uid and boltzgen and boltzgen.per_nanobody_components:
+            rank_mode = getattr(config, "boltzgen_rank_mode", None) or getattr(config, "rank_mode", "min")
+            final_boltzgen_scores, _ = BoltzgenWrapper.finalize_from_shared_components(
+                boltzgen.per_nanobody_components,
+                valid_nanobodies_by_uid,
+                config,
+            )
+            inference._merge_boltzgen_into_score_dict(
+                score_dict,
+                final_boltzgen_scores,
+                valid_nanobodies_by_uid,
+                config,
+                rank_mode=rank_mode,
+            )
+        
+        score_dict = calculate_scores_for_type(
+            score_dict=score_dict,
+            valid_items_by_uid=valid_nanobodies_by_uid,
+            item_type="nanobody",
+            config=config
+        )
+       
         # Determine winner for each model
-        winner_psichic = determine_winner(score_dict, mode=config['psichic_mode'], model_name="psichic", log_message=False)
-        winner_boltz = determine_winner(score_dict, mode=config['boltz_mode'], model_name="boltz", log_message=True)
+        winner_molecules = determine_winner(score_dict, config=config, item_type="molecule")
+        winner_nanobodies = determine_winner(score_dict, config=config, item_type="nanobody")
 
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
@@ -178,56 +183,59 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # Submit results to dashboard API if configured
         try:
             submit_url = os.environ.get('SUBMIT_RESULTS_URL')
-            if submit_url:
+            if submit_url and not test_mode:
                 await submit_epoch_results(
                     submit_url=submit_url,
                     config=config,
                     metagraph=metagraph,
                     boltz=boltz,
+                    boltzgen=boltzgen,
                     current_block=current_block,
                     start_block=start_block,
                     current_epoch=current_epoch,
-                    target_proteins=target_proteins,
-                    antitarget_proteins=antitarget_proteins,
                     uid_to_data=uid_to_data,
                     valid_molecules_by_uid=valid_molecules_by_uid,
-                    molecule_name_counts=molecule_name_counts,
-                    score_dict=score_dict
+                    valid_nanobodies_by_uid=valid_nanobodies_by_uid,
+                    score_dict=score_dict,
                 )
-            # After results submission, clean up Boltz and reset CUDA
-            if boltz is not None:
+                # only our validator creates protein viz files
                 try:
-                    boltz.cleanup_model()
-                except Exception:
-                    pass
-            boltz = None
-            reset_cuda_context()
+                    mmcif_dir = os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files", "outputs", "intermediate_designs", "refold_cif")
+                    for mmcif_file in os.listdir(mmcif_dir):
+                        if mmcif_file.endswith(".cif"):
+                            mmcif_path = Path(os.path.join(mmcif_dir, mmcif_file))
+                            run_protein_viz(mmcif_path=mmcif_path, 
+                            chain_a="A", chain_b="B", output_path=Path(os.path.join(mmcif_dir, f"{mmcif_file.replace('.cif', '.html')}")), 
+                            upload=True, epoch=current_epoch)
+                except Exception as e:
+                    bt.logging.error(f"Error running protein viz: {e}")
+
         except Exception as e:
             bt.logging.error(f"Failed to submit results to dashboard API: {e}")
+            bt.logging.error(traceback.format_exc())            
 
-        # Monitor validators
-        if not bool(getattr(config, 'test_mode', False)):
-            try:
-                set_weights_call_block = await subtensor.get_current_block()
-            except asyncio.CancelledError:
-                bt.logging.info("Resetting subtensor connection.")
-                subtensor = bt.async_subtensor(network=config.network)
-                await subtensor.initialize()
-                await asyncio.sleep(1)
-                set_weights_call_block = await subtensor.get_current_block()
-            monitor_validator(
-                score_dict=score_dict,
-                metagraph=metagraph,
-                current_epoch=current_epoch,
-                current_block=set_weights_call_block,
-                validator_hotkey=wallet.hotkey.ss58_address,
-                winning_uid=winner_psichic
-            )
+        # clean up temporary files if they exist
+        try:
+            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            bt.logging.warning(f"Error cleaning up temporary files: {e}")
 
-        return winner_psichic, winner_boltz
+        try:
+            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            bt.logging.warning(f"Error cleaning up temporary files: {e}")
+
+        bt.logging.info(f"Epoch {current_epoch} scoring finished.")
+
+        return winner_molecules, winner_nanobodies
 
     except Exception as e:
         bt.logging.error(f"Error processing epoch: {e}")
+        bt.logging.error(traceback.format_exc())
         return None
 
 async def main(config):
@@ -235,6 +243,7 @@ async def main(config):
     Main validator loop
     """
     test_mode = bool(getattr(config, 'test_mode', False))
+    local_input = bool(getattr(config, 'local_input_file', None))
     
     # Initialize subtensor client
     subtensor = bt.async_subtensor(network=config.network)
@@ -269,12 +278,17 @@ async def main(config):
             metagraph = await subtensor.metagraph(config.netuid)
             current_block = await subtensor.get_current_block()
 
-            if current_block % config.epoch_length == 0:
+            # Only wait for epoch boundary if not reading from local input
+            if local_input or current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
-                winner_psichic, winner_boltz = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                winner_molecules, winner_nanobodies = await process_epoch(config, current_block, metagraph, subtensor, wallet)
                 if not test_mode:
-                    await set_weights(winner_psichic, winner_boltz, config)
+                    await set_weights(winner_molecules, winner_nanobodies, config)
+                
+                # If using local input, exit after processing
+                if local_input:
+                    break
                 
             else:
                 # Waiting for epoch

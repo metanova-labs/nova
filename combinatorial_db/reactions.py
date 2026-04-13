@@ -1,8 +1,95 @@
 import sqlite3
 import os
+import random
+from typing import List, Optional, Tuple
+
 from rdkit import Chem
 from rdkit.Chem import AllChem
 import bittensor as bt
+
+
+def get_db_path() -> str:
+    """Return the path to the molecules SQLite database."""
+    return os.path.join(os.path.dirname(__file__), "molecules.sqlite")
+
+
+def get_available_reactions(db_path: str) -> List[Tuple[int, int, int, Optional[int]]]:
+    """
+    Return list of (rxn_id, roleA, roleB, roleC) for all reactions.
+    roleC is None for 2-component reactions.
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT rxn_id, roleA, roleB, roleC FROM reactions")
+        rows = cursor.fetchall()
+        conn.close()
+        return [(int(r[0]), r[1], r[2], r[3]) for r in rows]
+    except Exception as e:
+        bt.logging.error(f"Error listing reactions: {e}")
+        return []
+
+
+def get_molecule_ids_for_role(db_path: str, role: int) -> List[int]:
+    """Return mol_ids where (role_mask & role) == role (molecule can fulfill this role)."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT mol_id FROM molecules WHERE (role_mask & ?) = ?",
+            (role, role),
+        )
+        mol_ids = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return mol_ids
+    except Exception as e:
+        bt.logging.error(f"Error getting molecule IDs for role {role}: {e}")
+        return []
+
+
+def get_random_reaction_product(
+    db_path: Optional[str] = None,
+    rng: Optional[random.Random] = None,
+) -> Optional[str]:
+    """
+    Pick a random reaction and valid reactant IDs, return product name in
+    'rxn:rxn_id:mol1_id:mol2_id' or 'rxn:rxn_id:mol1_id:mol2_id:mol3_id' format.
+    Returns None if DB is missing, empty, or no valid combination is found.
+    """
+    db_path = db_path or get_db_path()
+    if not os.path.isfile(db_path):
+        bt.logging.error(f"Combinatorial DB not found: {db_path}")
+        return None
+    rng = rng or random
+    reactions = get_available_reactions(db_path)
+    if not reactions:
+        return None
+    rxn_id, roleA, roleB, roleC = rng.choice(reactions)
+    ids_a = get_molecule_ids_for_role(db_path, roleA)
+    ids_b = get_molecule_ids_for_role(db_path, roleB)
+    if not ids_a or not ids_b:
+        return None
+    if roleC is None or roleC == 0:
+        mol1_id = rng.choice(ids_a)
+        mol2_id = rng.choice(ids_b)
+        product_smiles = react_molecules(rxn_id, mol1_id, mol2_id, db_path)
+        if product_smiles is None:
+            return None
+        return f"rxn:{rxn_id}:{mol1_id}:{mol2_id}"
+    else:
+        ids_c = get_molecule_ids_for_role(db_path, roleC)
+        if not ids_c:
+            return None
+        mol1_id = rng.choice(ids_a)
+        mol2_id = rng.choice(ids_b)
+        mol3_id = rng.choice(ids_c)
+        product_smiles = react_three_components(
+            rxn_id, mol1_id, mol2_id, mol3_id, db_path
+        )
+        if product_smiles is None:
+            return None
+        return f"rxn:{rxn_id}:{mol1_id}:{mol2_id}:{mol3_id}"
+
 
 def get_reaction_info(rxn_id: int, db_path: str) -> tuple:
     try:

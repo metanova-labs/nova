@@ -1,0 +1,11 @@
+entities:
+  - protein: 
+      id: C
+      sequence: 80..140
+  - file:
+      path: 3qkg.cif
+       
+      include: 
+        - chain:
+            id: A
+

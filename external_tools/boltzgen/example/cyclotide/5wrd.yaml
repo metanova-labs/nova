@@ -1,0 +1,34 @@
+entities:
+  # Specify a designed protein chain
+  # 3 design residues, Cystein, 8 design residues, Cystein, 
+  # 6 design residues, Cystein, 5 design residues, Cystein, 
+  # 3 design residues, Cystein, 1 design residue, Cystein, 2 design residues
+  - protein: 
+      id: B
+      sequence: 3C8C6C5C3C1C2
+      # Make the designed peptide cyclic
+      cyclic: true
+
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: 5wrd.cif
+      # Which chain and residues in the .cif file to use as target (here all residues on chain A)
+      include:
+        - chain:
+            id: A
+
+      # Which regions of the target should have their structure specified
+      # Here we specify that all included target residues should have their structure specified
+      structure_groups: "all"
+
+constraints:
+  # Specify covalent difulside bonds within designed chain B 
+  - bond:
+      atom1: [B, 4, SG]  # connect SG of residue 4 to SG of residue 26 on chain B
+      atom2: [B, 26, SG]
+  - bond:
+      atom1: [B, 13, SG]  # connect SG of residue 13 to SG of residue 30 on chain B
+      atom2: [B, 30, SG]
+  - bond:
+      atom1: [B, 20, SG]  # connect SG of residue 20 to SG of residue 32 on chain B
+      atom2: [B, 32, SG]

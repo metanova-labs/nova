@@ -1,0 +1,40 @@
+entities:
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      path: 9d3d.cif
+      # Which chain and residues in the .cif file to use as target
+      # Here we include chains A, B, and C (all residues on each chain)
+      include:
+        - chain:
+            id: A
+        - chain:
+            id: B
+        - chain:
+            id: C
+      # Include residues that are within a radius of a reference region
+      # Here we include residues within a radius 30 of G:106..118
+      include_proximity:
+        - chain: 
+            id: G
+            res_index: 106..118
+            radius: 30
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify that the design should bind to residues 91, 128, and 131 on chains A, B, and C
+      binding_types:
+        - chain:
+            id: A
+            binding: 91,128,131
+        - chain:
+            id: B
+            binding: 91,128,131
+        - chain:
+            id: C
+            binding: 91,128,131
+
+  # Specify a designed protein chain
+  # random number between 8 and 18 of designed residues (inclusive)
+  - protein:
+      id: E
+      sequence: 8..18
+      # Make the designed protein chain cyclic
+      cyclic: True

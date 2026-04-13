@@ -1,0 +1,55 @@
+entities:
+  # Specify a designed protein chain 
+  - protein:
+      id: B
+      # random number between 40 and 80 of designed residues (inclusive)
+      sequence: 40..80
+  # Specification of the target which is extracted from a .cif file
+  - file:
+      # path to the target structure
+      path: hoxd13.cif
+      # Which chain and residues in the .cif file to use as target (uses only A: 1..71 here)
+      include: 
+        - chain:
+            id: A 
+            res_index: ..71
+      # Which regions of the target should have their structure specified
+      # Here we hide the entire target fragment (no coordinates specified)
+      structure_groups:
+        - group:
+            visibility: 0 
+            id: "all"
+      # Which regions of the target the design should or should NOT bind to
+      # Here we specify that the design should bind to residues 57..71 on chain A
+      binding_types:
+        - chain:
+            id: A
+            binding: 57..71
+
+  # Specify a non-designed protein chain fused to chain A
+  - protein:
+      id: C
+      fuse: A
+      # fixed 8-mer, all residues fixed, and all residues marked as binding
+      sequence: AAAAAAAA
+      binding_types: BBBBBBBB
+
+  # Continue pulling from the rest of chain A of the same file and fuse it to chain A
+  - file:
+      path: hoxd13.cif
+      # Subsequently included residues are fused onto chain A
+      fuse: A
+      # Include the remainder of chain A (residue 72 to the end)
+      include:
+        - chain:
+            id: A
+            res_index: 72..
+      # Start with all hidden, then explicitly show structure of a tail segment (281 to the end)
+      structure_groups:
+        - group:
+            visibility: 0
+            id: "all"
+        - group:
+            visibility: 1
+            id: A
+            res_index: 281..

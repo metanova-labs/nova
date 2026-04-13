@@ -6,19 +6,20 @@
 
 NOVA harnesses global compute and collective intelligence to navigate huge unexplored chemical spaces, uncovering breakthrough compounds at a fraction of the cost and time.
 
-## System Requirements
+## System Requirements for validators
 
 - Ubuntu 24.04 LTS (recommended)
-- Python 3.12
+- Python 3.10 - 3.12
 - CUDA 12.6 (for GPU support)
 - Sufficient RAM for ML model operations
+- 2 GPU devices for parallel inference. If only one is available, inference will run sequentially which may result in delayed/missing scoring rounds.
 - Internet connection for network participation
 
 ## Installation and Running
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone --recurse-submodules https://github.com/metanova-labs/nova.git
 cd nova
 ```
 
@@ -39,14 +40,10 @@ GITHUB_REPO_PATH="" # path within repo or ""
 
 # For validators
 VALIDATOR_API_KEY="your_api_key"
+AUTO_UPDATE="1" # Set to "0" to disable auto-updates (not recommended)
 ```
 
 3. Install dependencies:
-   - For CPU:
-   ```bash
-   ./install_deps_cpu.sh
-   ```
-   - For CUDA 12.6:
    ```bash
    ./install_deps_cu126.sh
    ```
@@ -70,7 +67,6 @@ The project uses several configuration files:
 - `.env`: Environment variables and API keys
 - `requirements/`: Dependency specifications for different environments
 - Command-line arguments for runtime configuration
-- `PSICHIC/runtime_config.py`: runtime configurations for PSICHIC model
 
 ### GitHub Authentication
 

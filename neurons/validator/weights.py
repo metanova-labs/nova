@@ -5,8 +5,9 @@ import os
 from dotenv import load_dotenv
 import asyncio
 
-async def set_weights(winner_psichic, winner_boltz, config):
-    if winner_psichic is not None or winner_boltz is not None:
+async def set_weights(winner_molecules, winner_nanobodies, config):
+    if winner_molecules is not None or winner_nanobodies is not None:
+        bt.logging.debug(f"Setting weights for winner molecules: {winner_molecules}, Winner nanobodies: {winner_nanobodies}")
         load_dotenv()
         
         burn_rate = 0.722
@@ -14,7 +15,7 @@ async def set_weights(winner_psichic, winner_boltz, config):
         wallet_name = config.wallet.name
         wallet_hotkey = config.wallet.hotkey
 
-        NETUID = 68
+        NETUID = config.netuid #68
         
         wallet = bt.wallet(
             name=wallet_name,  
@@ -39,7 +40,7 @@ async def set_weights(winner_psichic, winner_boltz, config):
         weights = [0.0] * n
 
         # Validate the user-provided target UIDs
-        for target_uid in [winner_psichic, winner_boltz]:
+        for target_uid in [winner_molecules, winner_nanobodies]:
             if target_uid is not None:
                 if not (0 <= target_uid < n):
                     bt.logging.error(f"Error: target_uid {target_uid} out of range [0, {n-1}]. Exiting.")
@@ -47,27 +48,24 @@ async def set_weights(winner_psichic, winner_boltz, config):
 
         # Set weights: burn to UID 0, remainder to winner
         weights[0] = burn_rate
-        # if winner_psichic and winner_boltz:
-        #     if winner_psichic == winner_boltz:
-        #         weights[winner_psichic] = 1.0 - burn_rate
-        #     else:
-        #         weights[winner_psichic] = (1.0 - burn_rate) * (1 - config.boltz_weight)
-        #         weights[winner_boltz] = (1.0 - burn_rate) * config.boltz_weight
+        mol_incentive = (1.0 - burn_rate) * (1 - config.nanobody_weight)
+        nanobody_incentive = (1.0 - burn_rate) * config.nanobody_weight
+        if winner_molecules and winner_nanobodies:
+            if winner_molecules == winner_nanobodies:
+                weights[winner_molecules] = 1.0 - burn_rate
+            else:
+                weights[winner_molecules] = mol_incentive
+                weights[winner_nanobodies] = nanobody_incentive
 
-        # elif winner_psichic and not winner_boltz:
-        #     weights[winner_psichic] = 1.0 - burn_rate
-
-        # elif not winner_psichic and winner_boltz:
-        #     weights[winner_boltz] = 1.0 - burn_rate
-        # else:
-        #     bt.logging.error("No valid molecule commitment found for current epoch.")
-        #     return
-
-        if winner_boltz:
-            weights[winner_boltz] = 1.0 - burn_rate
-        else:
-            bt.logging.error("No valid molecule commitment found for current epoch.")
-            return
+        # if no winner in any one category, send its portion of the incentive to the burn rate
+        elif winner_molecules and not winner_nanobodies:
+            bt.logging.debug(f"No nanobody winner, sending {nanobody_incentive} to burn rate")
+            weights[0] += nanobody_incentive
+            weights[winner_molecules] = mol_incentive
+        elif winner_nanobodies and not winner_molecules:
+            bt.logging.debug(f"No molecule winner, sending {mol_incentive} to burn rate")
+            weights[0] += mol_incentive
+            weights[winner_nanobodies] = nanobody_incentive
 
         # 3) Send the weights to the chain with retry logic
         max_retries = 10
