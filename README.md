@@ -9,7 +9,7 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
 ## System Requirements for validators
 
 - Ubuntu 24.04 LTS (recommended)
-- Python 3.12
+- Python 3.10 - 3.12
 - CUDA 12.6 (for GPU support)
 - Sufficient RAM for ML model operations
 - 2 GPU devices for parallel inference. If only one is available, inference will run sequentially which may result in delayed/missing scoring rounds.
