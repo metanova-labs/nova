@@ -52,7 +52,7 @@ class BoltzgenWrapper:
         self._run_configure_then_execute()
         results = self._collect_local_results()
         self._populate_per_nanobody_components(results)
-        bt.logging.debug("run_nanobody_inference: populated per_nanobody_components (ranking deferred)")
+        #bt.logging.debug("run_nanobody_inference: populated per_nanobody_components (ranking deferred)")
         return self.per_nanobody_components
 
     def finalize_ranking_from_components(
@@ -68,9 +68,9 @@ class BoltzgenWrapper:
         ranked = self._rank_metrics_dataframe(df)
         self._inject_category_ranks_into_components(ranked)
         final_boltzgen_scores = self._distribute_scores(ranked)
-        bt.logging.debug(
-            f"finalize_ranking_from_components: final_boltzgen_scores keys={list(final_boltzgen_scores.keys())}"
-        )
+        # bt.logging.debug(
+        #     f"finalize_ranking_from_components: final_boltzgen_scores keys={list(final_boltzgen_scores.keys())}"
+        # )
         return final_boltzgen_scores, self.per_nanobody_components
 
     @classmethod
@@ -247,7 +247,6 @@ class BoltzgenWrapper:
 
         # Calculate rank sums per category (for dashboard display, not used for scoring)
         results = self._rank_metrics_dataframe_by_category(results)
-        bt.logging.debug(f"Ranked metrics dataframe by category: {results}")
         return results
 
     def _rank_metrics_dataframe_by_category(self, results: pd.DataFrame) -> pd.DataFrame:
@@ -257,7 +256,6 @@ class BoltzgenWrapper:
             category_rank_columns = [f"{metric}_rank" for metric in metric_dict.keys()]
             results[f"{category}_rank_sum"] = results[category_rank_columns].sum(axis=1)
             results[f"{category}_worst_rank"] = results[category_rank_columns].max(axis=1)
-            bt.logging.debug(f"Ranked {category} metrics: {results[f'{category}_rank_sum']}")
         return results
 
     def _distribute_scores(self, results: pd.DataFrame) -> dict:

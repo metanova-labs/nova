@@ -116,7 +116,6 @@ def _merge_boltzgen_into_score_dict(
             ]
             rows.append(row)
         score_dict[uid]["nanobody_scores"] = rows
-        bt.logging.debug(f"_merge_boltzgen_into_score_dict: Set nanobody_scores for UID {uid}: {len(rows)} targets, {len(rows[0]) if rows else 0} sequences")
 
 
 def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict: dict, config) -> InferenceResult:
