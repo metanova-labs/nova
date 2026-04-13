@@ -15,7 +15,7 @@ sudo apt install -y python3.10-venv
 
 # install hmmer and mmseqs2
 sudo apt install -y hmmer
-wget https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz; tar xvfz mmseqs-linux-avx2.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
+wget -q https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz -O external_tools/mmseqs.tar.gz && tar xzf external_tools/mmseqs.tar.gz -C external_tools/ && rm external_tools/mmseqs.tar.gz && export PATH=$(pwd)/external_tools/mmseqs/bin/:$PATH
 
 # install igblast
 wget -q https://ftp.ncbi.nih.gov/blast/executables/igblast/release/LATEST/ncbi-igblast-1.22.0-x64-linux.tar.gz -O external_tools/igblast.tar.gz
