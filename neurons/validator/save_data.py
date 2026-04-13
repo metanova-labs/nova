@@ -487,7 +487,7 @@ async def push_nanobodies_to_hf(
         return
 
     for target_name, rows in rows_by_target.items():
-        filename = f"{target_name}_nanobodies_TEST.csv"
+        filename = f"{target_name}_nanobodies.csv"
         new_df = pd.DataFrame(rows)
 
         _append_and_upload_csv_to_hf(
@@ -532,7 +532,7 @@ async def push_molecules_to_hf(
     dedup_subset = "InChI_Key" if dedup_on_inchi else "Molecule_ID"
 
     for target_name in config["small_molecule_target"]:
-        filename = f"{target_name}_molecules_TEST.csv"
+        filename = f"{target_name}_molecules.csv"
         _append_and_upload_csv_to_hf(
             repo_id=repo_id,
             filename=filename,

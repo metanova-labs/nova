@@ -150,7 +150,7 @@ def index_top_sequences(target: str, n: int = 50) -> SearchEngine:
     try:
         local_path = hf_hub_download(
             repo_id="Metanova/Submission-Archive",
-            filename=f"{target}_nanobodies_TEST.csv",
+            filename=f"{target}_nanobodies.csv",
             repo_type='dataset',
             token=os.getenv("HF_TOKEN"),
         )
@@ -161,7 +161,7 @@ def index_top_sequences(target: str, n: int = 50) -> SearchEngine:
         return None
     except Exception as e:
         bt.logging.warning(
-            f"Could not download existing {target}_nanobodies_TEST.csv from Metanova/Submission-Archive: {e}"
+            f"Could not download existing {target}_nanobodies.csv from Metanova/Submission-Archive: {e}"
         )
         return None
         

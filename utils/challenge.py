@@ -102,7 +102,7 @@ def entry_unique_for_protein_hf(protein: str, entry_id: str, entity_type: str = 
             entry_ids_set = None
         
         if entity_type == 'nanobodies':
-            filename = f"{protein}_{entity_type}_TEST.csv"
+            filename = f"{protein}_{entity_type}.csv"
         else:
             filename = f"{protein}_{entity_type}.json"
         
