@@ -123,6 +123,13 @@ def _build_molecule_details(
         if comp and not isinstance(next(iter(comp.values()), None), dict):
             comp = {"unknown": comp}
 
+        if not comp or all(
+            all(v is None for v in metrics.values())
+            for metrics in comp.values()
+            if isinstance(metrics, dict)
+        ):
+            continue
+
         per_protein_entries = []
         for protein_name, metrics in (comp.items() if comp else [("unknown", {})]):
             def _get(key):
@@ -206,6 +213,14 @@ def _build_nanobody_details(
 
         # --- Per-target structural metrics ---
         per_target = uid_components.get(sequence, {})  # {protein_name: {metric: val}}
+
+        if not per_target or all(
+            all(v is None for v in metrics.values())
+            for metrics in per_target.values()
+            if isinstance(metrics, dict)
+        ):
+            continue
+
         target_scores = {}
         for protein_name, metrics in per_target.items():
             def _get(key, m=metrics):
