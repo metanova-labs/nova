@@ -26,6 +26,7 @@ def load_config(path: str = "config/config.yaml"):
     max_rotatable_bonds = molecule_config["max_rotatable_bonds"]
     num_molecules = molecule_config["num_molecules"]
     min_entropy = molecule_config["min_entropy"]
+    banned_atom_types = molecule_config["banned_atom_types"]
 
     boltz_config = config["boltz2_config"]
     boltz_metric = boltz_config["boltz_metric"]

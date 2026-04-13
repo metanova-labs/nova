@@ -20,6 +20,7 @@ molecule_requirements:
   min_rotatable_bonds: 1
   max_rotatable_bonds: 10
   min_entropy: 0.1 # minimum entropy required when num_molecules > 1
+  banned_atom_types: ["Se"]
 
 # Reaction filtering configuration
 reaction_filtering:
