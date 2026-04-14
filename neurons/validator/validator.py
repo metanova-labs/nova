@@ -158,7 +158,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 valid_nanobodies_by_uid,
                 config,
             )
-            bt.logging.debug(f"final_boltzgen_scores: {per_nanobody_components}")
+            bt.logging.debug(f"Raw boltzgen scores: {per_nanobody_components}")
             inference._merge_boltzgen_into_score_dict(
                 score_dict,
                 final_boltzgen_scores,
@@ -217,16 +217,14 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         # clean up temporary files if they exist
         try:
-            #shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
-            pass
+            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
         except FileNotFoundError:
             pass
         except Exception as e:
             bt.logging.warning(f"Error cleaning up temporary files: {e}")
 
         try:
-            #shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
-            pass
+            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
         except FileNotFoundError:
             pass
         except Exception as e:
