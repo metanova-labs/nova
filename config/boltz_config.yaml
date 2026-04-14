@@ -9,4 +9,5 @@ affinity_mw_correction: true
 output_format: "mmcif"
 override: false
 remove_files: true # Remove files after processing
+num_workers: 4
 
