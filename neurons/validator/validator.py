@@ -153,11 +153,12 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         # update scores for nanobodies
         if valid_nanobodies_by_uid and boltzgen and boltzgen.per_nanobody_components:
             rank_mode = getattr(config, "boltzgen_rank_mode", None) or getattr(config, "rank_mode", "min")
-            final_boltzgen_scores, _ = BoltzgenWrapper.finalize_from_shared_components(
+            final_boltzgen_scores, per_nanobody_components = BoltzgenWrapper.finalize_from_shared_components(
                 boltzgen.per_nanobody_components,
                 valid_nanobodies_by_uid,
                 config,
             )
+            bt.logging.debug(f"final_boltzgen_scores: {per_nanobody_components}")
             inference._merge_boltzgen_into_score_dict(
                 score_dict,
                 final_boltzgen_scores,
@@ -216,14 +217,16 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         # clean up temporary files if they exist
         try:
-            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
+            #shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
+            pass
         except FileNotFoundError:
             pass
         except Exception as e:
             bt.logging.warning(f"Error cleaning up temporary files: {e}")
 
         try:
-            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
+            #shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
+            pass
         except FileNotFoundError:
             pass
         except Exception as e:
