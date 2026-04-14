@@ -5,7 +5,6 @@ remove_files: true # Remove files after processing
 # boltzgen params
 protocol: nanobody-anything # nanobody-anything or protein-anything?
 num_designs: 1
-num_workers: 4
 skip_inverse_folding: true
 execute_steps:
   - design # only included here for initial coordinate generation. Input sequence is not changed (num_designs should be 1)

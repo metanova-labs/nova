@@ -127,7 +127,7 @@ properties:
                 seed = self.base_seed,  
                 affinity_mw_correction = self.config['affinity_mw_correction'],
                 override = self.config['override'],
-                num_workers = self.config['num_workers'],
+                num_workers = 0,
             )
             bt.logging.info(f"Boltz2 predictions complete")
 
