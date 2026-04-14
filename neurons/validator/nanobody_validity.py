@@ -130,7 +130,7 @@ async def validate_nanobodies(
                     uid_invalid = True
                     break
 
-                if any(is_duplicate(m) for result in similarity_results for m in result.matches):
+                if any(is_duplicate(m)[0] for result in similarity_results for m in result.matches):
                     bt.logging.warning(f"UID {uid}: contains sequences too similar to a top sequence for this target")
                     uid_invalid = True
                     break
