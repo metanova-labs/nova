@@ -144,8 +144,6 @@ class BoltzgenWrapper:
         ]
         if self.boltzgen_config['skip_inverse_folding']:
             configure_argv.append("--skip_inverse_folding")
-        if self.boltzgen_config.get('num_workers') is not None:
-            configure_argv += ["--num_workers", str(self.boltzgen_config['num_workers'])]
         if self.boltzgen_config.get('step_scale') is not None:
             configure_argv += ["--step_scale", str(self.boltzgen_config['step_scale'])]
         if self.boltzgen_config.get('noise_scale') is not None:
