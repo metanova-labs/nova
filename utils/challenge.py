@@ -101,10 +101,7 @@ def entry_unique_for_protein_hf(protein: str, entry_id: str, entity_type: str = 
             cached_sha = None
             entry_ids_set = None
         
-        if entity_type == 'nanobodies':
-            filename = f"{protein}_{entity_type}.csv"
-        else:
-            filename = f"{protein}_{entity_type}.json"
+        filename = f"{protein}_{entity_type}.csv"
         
         if cached_sha is None or (current_time - last_check_time > metadata_ttl):
             url = hf_hub_url(
