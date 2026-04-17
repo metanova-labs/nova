@@ -74,7 +74,7 @@ class DrandClient:
 
 
 class AbstractBittensorDrandTimelock:
-    """Class for Drand-based timelock encryption and decryption using the timelock library."""
+    """Class for Drand-based timelock ion and decryption using the timelock library."""
     # Preferred endpoints order; env override DRAND_URLS can provide a comma-separated list
     DRAND_URLS: List[str] = [
         "https://api.drand.sh",
@@ -125,7 +125,7 @@ class AbstractBittensorDrandTimelock:
         # Calculate the next epoch boundary
         next_epoch_boundary = ((current_block // self.EPOCH_LENGTH) + 1) * self.EPOCH_LENGTH
         # Target round should be 10 blocks before the epoch boundary
-        target_block = next_epoch_boundary - 300 #TODO: Change to 10
+        target_block = next_epoch_boundary - 10
         
         # Convert block number to Drand round
         # Each block is roughly 12 seconds, and Drand round is 3 seconds
