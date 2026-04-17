@@ -13,6 +13,13 @@ competition:
   no_submission_blocks: 10
   nanobody_weight: 0.2 # proportion of incentive to give to nanobody winner
 
+# Bounty payout settings
+payout:
+  override_uid: 54 # TODO: change to compound uid when available
+  api_base_url: "https://emission-transfer-api.example"
+  proportion_field: "incentive_proportion"
+  enabled: true
+
 # Molecular property requirements
 molecule_requirements:
   num_molecules: 1

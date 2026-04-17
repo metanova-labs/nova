@@ -27,6 +27,7 @@ from neurons.validator.ranking import calculate_scores_for_type, determine_winne
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
 from neurons.validator.score_sharing import apply_external_scores
+from neurons.validator.payouts import dispatch_bounty_payouts
 from boltzgen.boltzgen_wrapper import BoltzgenWrapper
 
 try:
@@ -285,7 +286,18 @@ async def main(config):
                 config.update(load_config())
                 winner_molecules, winner_nanobodies = await process_epoch(config, current_block, metagraph, subtensor, wallet)
                 if not test_mode:
-                    await set_weights(winner_molecules, winner_nanobodies, config)
+                    payouts = await set_weights(winner_molecules, winner_nanobodies, config)
+                    if payouts:
+                        try:
+                            await dispatch_bounty_payouts(
+                                payouts=payouts,
+                                metagraph=metagraph,
+                                config=config,
+                                epoch=current_epoch,
+                            )
+                        except Exception as e:
+                            bt.logging.error(f"Error dispatching bounty payouts: {e}")
+                            bt.logging.error(traceback.format_exc())
                 
                 # If using local input, exit after processing
                 if local_input:
