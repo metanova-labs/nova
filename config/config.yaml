@@ -1,7 +1,7 @@
 # Number of targets and antitargets to select
 protein_selection:
   small_molecule:
-    target: "Q63380" # if multiple targets, they should be comma separated
+    target: "Q13547" # if multiple targets, they should be comma separated
     clip_interval: [null] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
   nanobody:
     target: "Q9NZQ7" # if multiple targets, they should be comma separated
@@ -24,7 +24,7 @@ molecule_requirements:
 
 # Reaction filtering configuration
 reaction_filtering:
-  random_valid_reaction: false  # true = one random reaction per epoch, false = only allowed reactions below are allowed
+  random_valid_reaction: true  # true = one random reaction per epoch, false = only allowed reactions below are allowed
   allowed_reactions: ["rxn:1", "rxn:2"] # allowed reactions (only used if random_valid_reaction is false)
 
 # Boltz2 configuration
