@@ -1,20 +1,20 @@
+import json
 import os
-import asyncio
+
 import aiohttp
 import bittensor as bt
 
 
+COMPOUND_PAYOUT_URL = "https://emission-transfer-api.metanova-labs.ai/payouts/compound-epoch-reward"
+
+
 async def dispatch_bounty_payouts(
-    payouts: dict[int, float],
+    payouts: list[tuple[str, int, float]],
     metagraph,
     config,
     epoch: int,
 ) -> None:
-    """
-    POST one /payouts/compound-epoch-reward request per winner.
-
-    payouts: {uid -> proportion of total non-burn incentive in [0, 1]}
-    """
+    """POST up to one compound payout request per epoch component."""
     if not payouts:
         bt.logging.info("No payouts to dispatch this epoch.")
         return
@@ -23,15 +23,13 @@ async def dispatch_bounty_payouts(
         bt.logging.info("Emission override disabled in config.")
         return
 
-    base_url = config.emission_api_base_url
-    proportion_field = config.emission_proportion_field
     api_key = os.environ.get("WALLET_TRANSFER_API_KEY")
 
-    if not base_url or not api_key:
-        bt.logging.error("Bounty payouts misconfigured: missing api_base_url or WALLET_TRANSFER_API_KEY.")
+    if not api_key:
+        bt.logging.info("Skipping payout transfer: WALLET_TRANSFER_API_KEY not set.")
+   
         return
 
-    url = base_url.rstrip("/") + "/payouts/compound-epoch-reward"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -39,51 +37,50 @@ async def dispatch_bounty_payouts(
 
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        for uid, proportion in payouts.items():
+        for component, uid, proportion in payouts:
             if uid >= len(metagraph.coldkeys):
-                bt.logging.error(f"UID {uid} out of metagraph coldkey range; skipping.")
+                bt.logging.error(f"Payout UID {uid} out of metagraph coldkey range for {component}; skipping.")
                 continue
+
             coldkey = metagraph.coldkeys[uid]
             body = {
+                "component": component,
                 "destination_coldkey": coldkey,
                 "epoch": epoch,
-                proportion_field: round(float(proportion), 8),
+                "incentive_proportion": round(float(proportion), 8),
             }
-            await _post_with_retry(session, url, headers, body, uid)
+            await _post_payout(session, headers, body, component, uid)
 
 
-async def _post_with_retry(session, url, headers, body, uid, max_attempts: int = 3):
-    backoff = 5
-    for attempt in range(1, max_attempts + 1):
-        try:
-            async with session.post(url, json=body, headers=headers) as resp:
-                text = await resp.text()
-                if resp.status == 200:
-                    try:
-                        data = await resp.json()
-                    except Exception:
-                        data = {}
-                    status = data.get("status")
-                    if status == "success":
-                        bt.logging.info(
-                            f"Payout OK uid={uid} extrinsic={data.get('extrinsic_id')} "
-                            f"amount_alpha={data.get('amount_alpha')}"
-                        )
-                        return
-                    # HTTP 200 but domain failure don't retry
-                    bt.logging.error(
-                        f"Payout domain failure uid={uid} status={status} detail={data.get('detail')}"
-                    )
-                    return
-                if resp.status in (401, 422):
-                    bt.logging.error(f"Non-retryable HTTP {resp.status} for uid={uid}: {text}")
-                    return
-                bt.logging.warning(f"HTTP {resp.status} on uid={uid} attempt {attempt}: {text}")
-        except Exception as e:
-            bt.logging.warning(f"Payout request error uid={uid} attempt {attempt}: {e}")
+async def _post_payout(session, headers, body, component, uid):
+    try:
+        async with session.post(COMPOUND_PAYOUT_URL, json=body, headers=headers) as resp:
+            status_code = resp.status
+            text = await resp.text()
+    except Exception as e:
+        bt.logging.error(f"Payout request error component={component} uid={uid}: {e}")
+        return
 
-        if attempt < max_attempts:
-            await asyncio.sleep(backoff)
-            backoff *= 2
+    if status_code != 200:
+        bt.logging.error(
+            f"Payout request failed component={component} uid={uid} http_status={status_code} body={text}"
+        )
+        return
 
-    bt.logging.error(f"Payout failed for uid={uid} after {max_attempts} attempts.")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        bt.logging.error(f"Payout response was not valid JSON component={component} uid={uid} body={text}")
+        return
+
+    status = data.get("status")
+    if status == "success":
+        bt.logging.info(
+            f"Payout OK component={component} uid={uid} extrinsic={data.get('extrinsic_id')} "
+            f"amount_alpha={data.get('amount_alpha')}"
+        )
+        return
+
+    bt.logging.error(
+        f"Payout domain failure component={component} uid={uid} status={status} detail={data.get('detail')}"
+    )

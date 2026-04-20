@@ -284,7 +284,14 @@ async def main(config):
             if local_input or current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
-                winner_molecules, winner_nanobodies = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                if epoch_result is None:
+                    winner_molecules = None
+                    winner_nanobodies = None
+                else:
+                    winner_molecules, winner_nanobodies = epoch_result
+
+                current_epoch = (current_block // config.epoch_length) - 1
                 if not test_mode:
                     payouts = await set_weights(winner_molecules, winner_nanobodies, config)
                     if payouts:

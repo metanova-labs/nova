@@ -15,10 +15,8 @@ competition:
 
 # Bounty payout settings
 payout:
-  override_uid: 54 # TODO: change to compound uid when available
-  api_base_url: "https://emission-transfer-api.example"
-  proportion_field: "incentive_proportion"
   enabled: true
+  override_uid: 54 # compound payout UID
 
 # Molecular property requirements
 molecule_requirements:
