@@ -254,7 +254,8 @@ async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_blo
                 "molecules": submission["molecules"],
                 "sequences": submission["sequences"],
                 "block_submitted": commit.block,
-                "push_time": push_timestamps.get(uid, '')
+                "push_time": push_timestamps.get(uid, ''),
+                "hotkey": commit.hotkey,
             }
 
     return uid_to_data, current_commitments, decrypted_submissions, push_timestamps

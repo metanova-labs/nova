@@ -233,7 +233,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         bt.logging.info(f"Epoch {current_epoch} scoring finished.")
 
-        return winner_molecules, winner_nanobodies
+        return winner_molecules, winner_nanobodies, uid_to_data
 
     except Exception as e:
         bt.logging.error(f"Error processing epoch: {e}")
@@ -285,20 +285,31 @@ async def main(config):
                 # Epoch end - process and set weights
                 config.update(load_config())
                 epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                winner_molecules = None
+                winner_nanobodies = None
                 if epoch_result is None:
-                    winner_molecules = None
-                    winner_nanobodies = None
+                    pass
                 else:
-                    winner_molecules, winner_nanobodies = epoch_result
+                    winner_molecules, winner_nanobodies, uid_to_data = epoch_result
 
                 current_epoch = (current_block // config.epoch_length) - 1
                 if not test_mode:
                     payouts = await set_weights(winner_molecules, winner_nanobodies, config)
                     if payouts:
                         try:
+                            hotkey_payouts = []
+                            for component, uid, proportion in payouts:
+                                hotkey = uid_to_data.get(uid, {}).get("hotkey")
+                                if not hotkey:
+                                    bt.logging.error(
+                                        f"Missing hotkey for payout component={component} uid={uid}; skipping."
+                                    )
+                                    continue
+                                hotkey_payouts.append((component, hotkey, proportion))
+
                             await dispatch_bounty_payouts(
-                                payouts=payouts,
-                                metagraph=metagraph,
+                                payouts=hotkey_payouts,
+                                subtensor=subtensor,
                                 config=config,
                                 epoch=current_epoch,
                             )
