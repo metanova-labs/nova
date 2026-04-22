@@ -12,8 +12,13 @@ def is_uid_valid(uid, metagraph):
 
 async def set_weights(winner_molecules, winner_nanobodies, config):
     bt.logging.debug(
-        f"Setting weights for winner molecules: {winner_molecules}, Winner nanobodies: {winner_nanobodies}"
+        f"Setting weights for epoch {config.epoch}"
     )
+
+    if config.emission_override_enabled:
+        bt.logging.debug(f"Emission override enabled")
+    else:
+        bt.logging.debug(f"Emission override disabled: setting weights for winner molecules: {winner_molecules} and nanobodies: {winner_nanobodies}")
 
     burn_rate = 0.722
     wallet_name = config.wallet.name
