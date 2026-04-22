@@ -27,6 +27,7 @@ from neurons.validator.ranking import calculate_scores_for_type, determine_winne
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
 from neurons.validator.score_sharing import apply_external_scores
+from neurons.validator.payouts import dispatch_bounty_payouts
 from boltzgen.boltzgen_wrapper import BoltzgenWrapper
 
 try:
@@ -232,7 +233,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
 
         bt.logging.info(f"Epoch {current_epoch} scoring finished.")
 
-        return winner_molecules, winner_nanobodies
+        return winner_molecules, winner_nanobodies, uid_to_data
 
     except Exception as e:
         bt.logging.error(f"Error processing epoch: {e}")
@@ -283,9 +284,38 @@ async def main(config):
             if local_input or current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
-                winner_molecules, winner_nanobodies = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                winner_molecules = None
+                winner_nanobodies = None
+                if epoch_result is None:
+                    pass
+                else:
+                    winner_molecules, winner_nanobodies, uid_to_data = epoch_result
+
+                current_epoch = (current_block // config.epoch_length) - 1
                 if not test_mode:
-                    await set_weights(winner_molecules, winner_nanobodies, config)
+                    payouts = await set_weights(winner_molecules, winner_nanobodies, config)
+                    if payouts:
+                        try:
+                            hotkey_payouts = []
+                            for component, uid, proportion in payouts:
+                                hotkey = uid_to_data.get(uid, {}).get("hotkey")
+                                if not hotkey:
+                                    bt.logging.error(
+                                        f"Missing hotkey for payout component={component} uid={uid}; skipping."
+                                    )
+                                    continue
+                                hotkey_payouts.append((component, hotkey, proportion))
+
+                            await dispatch_bounty_payouts(
+                                payouts=hotkey_payouts,
+                                subtensor=subtensor,
+                                config=config,
+                                epoch=current_epoch,
+                            )
+                        except Exception as e:
+                            bt.logging.error(f"Error dispatching bounty payouts: {e}")
+                            bt.logging.error(traceback.format_exc())
                 
                 # If using local input, exit after processing
                 if local_input:

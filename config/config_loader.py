@@ -19,7 +19,11 @@ def load_config(path: str = "config/config.yaml"):
 
     no_submission_blocks = config["competition"]["no_submission_blocks"]
     nanobody_weight = config["competition"]["nanobody_weight"]
-    
+
+    payout_config = config.get("payout", {})
+    emission_override_uid = payout_config.get("override_uid")
+    emission_override_enabled = payout_config.get("enabled", False)
+
     molecule_config = config["molecule_requirements"]
     min_heavy_atoms = molecule_config["min_heavy_atoms"]
     min_rotatable_bonds = molecule_config["min_rotatable_bonds"]
@@ -68,6 +72,8 @@ def load_config(path: str = "config/config.yaml"):
         'nanobody_target_clip_interval': nanobody_target_clip_interval,
         'no_submission_blocks': no_submission_blocks,
         'nanobody_weight': nanobody_weight,
+        'emission_override_uid': emission_override_uid,
+        'emission_override_enabled': emission_override_enabled,
         'min_heavy_atoms': min_heavy_atoms,
         'min_rotatable_bonds': min_rotatable_bonds,
         'max_rotatable_bonds': max_rotatable_bonds,

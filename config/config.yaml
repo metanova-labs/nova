@@ -13,6 +13,11 @@ competition:
   no_submission_blocks: 10
   nanobody_weight: 0.2 # proportion of incentive to give to nanobody winner
 
+# Bounty payout settings
+payout:
+  enabled: true
+  override_uid: 61 # compound payout UID
+
 # Molecular property requirements
 molecule_requirements:
   num_molecules: 1
