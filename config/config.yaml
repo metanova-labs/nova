@@ -16,7 +16,7 @@ competition:
 # Bounty payout settings
 payout:
   enabled: true
-  override_uid: 54 # compound payout UID
+  override_uid: 61 # compound payout UID
 
 # Molecular property requirements
 molecule_requirements:
