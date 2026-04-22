@@ -125,7 +125,7 @@ class AbstractBittensorDrandTimelock:
         # Calculate the next epoch boundary
         next_epoch_boundary = ((current_block // self.EPOCH_LENGTH) + 1) * self.EPOCH_LENGTH
         # Target round should be 10 blocks before the epoch boundary
-        target_block = next_epoch_boundary - 300 #TODO: Change to 10
+        target_block = next_epoch_boundary - 10
         
         # Convert block number to Drand round
         # Each block is roughly 12 seconds, and Drand round is 3 seconds
