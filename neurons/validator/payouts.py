@@ -6,6 +6,8 @@ import bittensor as bt
 
 
 COMPOUND_PAYOUT_URL = "https://emission-transfer-api.metanova-labs.ai/payouts/compound-epoch-reward"
+COMPOUND_PAYOUT_HTTP_TIMEOUT_S = 90
+EXPECTED_PAYOUT_STATUSES = {"already_processing", "idempotency_conflict"}
 
 
 async def dispatch_bounty_payouts(
@@ -35,7 +37,7 @@ async def dispatch_bounty_payouts(
         "Authorization": f"Bearer {api_key}",
     }
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = aiohttp.ClientTimeout(total=COMPOUND_PAYOUT_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for component, hotkey, proportion in payouts:
             coldkey = await _resolve_hotkey_owner(subtensor, hotkey)
@@ -49,41 +51,50 @@ async def dispatch_bounty_payouts(
                 "epoch": epoch,
                 "incentive_proportion": round(float(proportion), 8),
             }
-            await _post_payout(session, headers, body, component, coldkey)
+            await _post_payout(session, headers, body, epoch, component, coldkey)
 
 
-async def _post_payout(session, headers, body, component, coldkey):
+async def _post_payout(session, headers, body, epoch, component, coldkey):
     try:
         async with session.post(COMPOUND_PAYOUT_URL, json=body, headers=headers) as resp:
             status_code = resp.status
             text = await resp.text()
     except Exception as e:
-        bt.logging.error(f"Payout request error component={component} coldkey={coldkey}: {e}")
-        return
-
-    if status_code != 200:
         bt.logging.error(
-            f"Payout request failed component={component} coldkey={coldkey} http_status={status_code} body={text}"
+            f"Payout request error epoch={epoch} component={component} coldkey={coldkey} error={e}"
         )
         return
 
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        bt.logging.error(f"Payout response was not valid JSON component={component} coldkey={coldkey} body={text}")
-        return
-
-    status = data.get("status")
-    if status == "success":
-        bt.logging.info(
-            f"Payout OK component={component} coldkey={coldkey} extrinsic={data.get('extrinsic_id')} "
-            f"amount_alpha={data.get('amount_alpha')}"
+        bt.logging.error(
+            f"Payout response was not valid JSON epoch={epoch} component={component} "
+            f"coldkey={coldkey} http_status={status_code}"
         )
         return
 
-    bt.logging.error(
-        f"Payout domain failure component={component} coldkey={coldkey} status={status} detail={data.get('detail')}"
-    )
+    status = data.get("status")
+    detail = data.get("detail")
+
+    if status_code != 200:
+        bt.logging.error(
+            f"Payout request failed epoch={epoch} component={component} coldkey={coldkey} "
+            f"http_status={status_code} status={status} detail={detail}"
+        )
+        return
+
+    if status == "success":
+        bt.logging.info(
+            f"Payout sent epoch={epoch} component={component} coldkey={coldkey} "
+            f"amount_alpha={data.get('amount_alpha')} "
+            f"extrinsic={data.get('extrinsic_id')}"
+        )
+        return
+
+    log = bt.logging.warning if status in EXPECTED_PAYOUT_STATUSES else bt.logging.error
+    prefix = "Payout skipped" if status in EXPECTED_PAYOUT_STATUSES else "Payout failed"
+    log(f"{prefix} epoch={epoch} component={component} coldkey={coldkey} status={status} detail={detail}")
 
 
 async def _resolve_hotkey_owner(subtensor, hotkey: str) -> str | None:
