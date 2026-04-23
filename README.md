@@ -45,7 +45,7 @@ AUTO_UPDATE="1" # Set to "0" to disable auto-updates (not recommended)
 
 3. Install dependencies:
    ```bash
-   ./install_deps_cu126.sh
+   ./install_deps.sh [--cuda <version>]  #cuda version is optional, default is 12.6
    ```
 
 4. Run:
