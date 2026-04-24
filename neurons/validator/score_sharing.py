@@ -287,7 +287,8 @@ async def apply_external_scores(
             )
             await asyncio.sleep(WAIT_SECONDS)
 
-        # Fetch all averages before mutating (avoid applying molecule updates if nanobody GET fails).
+        # Fetch averages per type. Failures are scoped to their own type so a
+        # nanobody fetch failure does not prevent molecule averages from being applied and vice versa
         name_to_target_avgs: Optional[Dict[str, Dict]] = None
         hash_to_target_avgs: Optional[Dict[str, Dict]] = None
 
@@ -301,17 +302,25 @@ async def apply_external_scores(
                 s, avgs = await _get_target_averages(url, headers)
                 return name, s, avgs
 
-            mol_results = await asyncio.gather(*[_get_mol_avg(n) for n in all_mol_names])
+            try:
+                mol_results = await asyncio.gather(*[_get_mol_avg(n) for n in all_mol_names])
 
-            name_to_target_avgs = {}
-            for name, status_code_mol, target_avgs in mol_results:
-                if status_code_mol >= 400 or target_avgs is None:
-                    bt.logging.warning(
-                        f"Score-share molecule avg fetch failed for {name}@{epoch} "
-                        f"with status {status_code_mol}; using local scores."
-                    )
-                    return score_dict
-                name_to_target_avgs[name] = target_avgs
+                name_to_target_avgs = {}
+                for name, status_code_mol, target_avgs in mol_results:
+                    if status_code_mol >= 400 or target_avgs is None:
+                        bt.logging.warning(
+                            f"Score-share molecule avg fetch failed for {name}@{epoch} "
+                            f"(status={status_code_mol}); using local scores for molecules"
+                        )
+                        name_to_target_avgs = None
+                        break
+                    name_to_target_avgs[name] = target_avgs
+            except Exception as e:
+                bt.logging.warning(
+                    f"Score-share molecule avg fetch raised exception (epoch={epoch}): {e}; "
+                    f"using local scores for molecules"
+                )
+                name_to_target_avgs = None
 
         if uid_to_nano_id:
             all_hashes: set[str] = set()
@@ -323,82 +332,102 @@ async def apply_external_scores(
                 s, avgs = await _get_target_averages(url, headers)
                 return seq_hash, s, avgs
 
-            nano_results = await asyncio.gather(*[_get_nano_avg(h) for h in all_hashes])
+            try:
+                nano_results = await asyncio.gather(*[_get_nano_avg(h) for h in all_hashes])
 
-            hash_to_target_avgs = {}
-            for seq_hash, status_code_nano, target_avgs in nano_results:
-                if status_code_nano >= 400 or target_avgs is None:
-                    bt.logging.warning(
-                        f"Score-share nanobody avg fetch failed for {seq_hash}@{epoch} "
-                        f"with status {status_code_nano}; using local scores."
-                    )
-                    return score_dict
-                hash_to_target_avgs[seq_hash] = target_avgs
+                hash_to_target_avgs = {}
+                for seq_hash, status_code_nano, target_avgs in nano_results:
+                    if status_code_nano >= 400 or target_avgs is None:
+                        bt.logging.warning(
+                            f"Score-share nanobody avg fetch failed for {seq_hash}@{epoch} "
+                            f"(status={status_code_nano}); using local scores for nanobodies"
+                        )
+                        hash_to_target_avgs = None
+                        break
+                    hash_to_target_avgs[seq_hash] = target_avgs
+            except Exception as e:
+                bt.logging.warning(
+                    f"Score-share nanobody avg fetch raised exception (epoch={epoch}): {e}; "
+                    f"using local scores for nanobodies"
+                )
+                hash_to_target_avgs = None
 
         if uid_to_mol_id and name_to_target_avgs is not None:
-            if per_molecule_components:
-                for uid, id_item_map in uid_to_mol_id.items():
-                    for name, smiles in id_item_map.items():
-                        averaged = name_to_target_avgs.get(name)
-                        if not averaged:
-                            continue
-                        for protein_name, avg_metrics in averaged.items():
-                            if uid in per_molecule_components and smiles in per_molecule_components[uid]:
-                                if protein_name in per_molecule_components[uid][smiles]:
-                                    comp = per_molecule_components[uid][smiles][protein_name]
-                                    for key in MOLECULE_METRIC_KEYS:
-                                        avg_val = avg_metrics.get(key)
-                                        if avg_val is not None:
-                                            comp[key] = avg_val
-                                    avg_score = avg_metrics.get("score")
-                                    if avg_score is not None:
-                                        comp["score"] = float(avg_score)
-
-            if target_proteins:
-                protein_to_idx = {p: i for i, p in enumerate(target_proteins)}
-                for uid, id_item_map in uid_to_mol_id.items():
-                    mol_data = valid_molecules_by_uid.get(uid, {})
-                    names_list = mol_data.get('names', []) or []
-                    name_to_mol_idx = {n: i for i, n in enumerate(names_list)}
-                    uid_targets = score_dict.get(uid, {}).get('molecule_scores', [])
-
-                    for name, smiles in id_item_map.items():
-                        averaged = name_to_target_avgs.get(name)
-                        if not averaged:
-                            continue
-                        mol_idx = name_to_mol_idx.get(name)
-                        if mol_idx is None:
-                            continue
-                        for protein_name, avg_metrics in averaged.items():
-                            target_idx = protein_to_idx.get(protein_name)
-                            if target_idx is None:
+            try:
+                if per_molecule_components:
+                    for uid, id_item_map in uid_to_mol_id.items():
+                        for name, smiles in id_item_map.items():
+                            averaged = name_to_target_avgs.get(name)
+                            if not averaged:
                                 continue
-                            avg_score = avg_metrics.get("score")
-                            if avg_score is not None and target_idx < len(uid_targets) and mol_idx < len(uid_targets[target_idx]):
-                                uid_targets[target_idx][mol_idx] = float(avg_score)
+                            for protein_name, avg_metrics in averaged.items():
+                                if uid in per_molecule_components and smiles in per_molecule_components[uid]:
+                                    if protein_name in per_molecule_components[uid][smiles]:
+                                        comp = per_molecule_components[uid][smiles][protein_name]
+                                        for key in MOLECULE_METRIC_KEYS:
+                                            avg_val = avg_metrics.get(key)
+                                            if avg_val is not None:
+                                                comp[key] = avg_val
+                                        avg_score = avg_metrics.get("score")
+                                        if avg_score is not None:
+                                            comp["score"] = float(avg_score)
 
-            bt.logging.info(
-                f"Replaced molecule scores with validator averages for {len(name_to_target_avgs)} molecule(s)"
-            )
+                if target_proteins:
+                    protein_to_idx = {p: i for i, p in enumerate(target_proteins)}
+                    for uid, id_item_map in uid_to_mol_id.items():
+                        mol_data = valid_molecules_by_uid.get(uid, {})
+                        names_list = mol_data.get('names', []) or []
+                        name_to_mol_idx = {n: i for i, n in enumerate(names_list)}
+                        uid_targets = score_dict.get(uid, {}).get('molecule_scores', [])
+
+                        for name, smiles in id_item_map.items():
+                            averaged = name_to_target_avgs.get(name)
+                            if not averaged:
+                                continue
+                            mol_idx = name_to_mol_idx.get(name)
+                            if mol_idx is None:
+                                continue
+                            for protein_name, avg_metrics in averaged.items():
+                                target_idx = protein_to_idx.get(protein_name)
+                                if target_idx is None:
+                                    continue
+                                avg_score = avg_metrics.get("score")
+                                if avg_score is not None and target_idx < len(uid_targets) and mol_idx < len(uid_targets[target_idx]):
+                                    uid_targets[target_idx][mol_idx] = float(avg_score)
+
+                bt.logging.info(
+                    f"Replaced molecule scores with validator averages for {len(name_to_target_avgs)} molecule(s)"
+                )
+            except Exception as e:
+                bt.logging.warning(
+                    f"Score-share molecule avg apply raised exception (epoch={epoch}): {e}; "
+                    f"using local scores for molecules"
+                )
 
         if uid_to_nano_id and hash_to_target_avgs is not None:
-            if per_nanobody_components:
-                for uid, id_item_map in uid_to_nano_id.items():
-                    for seq_hash, sequence in id_item_map.items():
-                        averaged = hash_to_target_avgs.get(seq_hash)
-                        if not averaged:
-                            continue
-                        for protein_name, avg_metrics in averaged.items():
-                            if uid in per_nanobody_components and sequence in per_nanobody_components[uid]:
-                                if protein_name in per_nanobody_components[uid][sequence]:
-                                    for key in NANOBODY_METRIC_KEYS:
-                                        avg_val = avg_metrics.get(key)
-                                        if avg_val is not None:
-                                            per_nanobody_components[uid][sequence][protein_name][key] = avg_val
+            try:
+                if per_nanobody_components:
+                    for uid, id_item_map in uid_to_nano_id.items():
+                        for seq_hash, sequence in id_item_map.items():
+                            averaged = hash_to_target_avgs.get(seq_hash)
+                            if not averaged:
+                                continue
+                            for protein_name, avg_metrics in averaged.items():
+                                if uid in per_nanobody_components and sequence in per_nanobody_components[uid]:
+                                    if protein_name in per_nanobody_components[uid][sequence]:
+                                        for key in NANOBODY_METRIC_KEYS:
+                                            avg_val = avg_metrics.get(key)
+                                            if avg_val is not None:
+                                                per_nanobody_components[uid][sequence][protein_name][key] = avg_val
 
-            bt.logging.info(
-                f"Replaced nanobody scores with validator averages for {len(hash_to_target_avgs)} sequence(s)"
-            )
+                bt.logging.info(
+                    f"Replaced nanobody scores with validator averages for {len(hash_to_target_avgs)} sequence(s)"
+                )
+            except Exception as e:
+                bt.logging.warning(
+                    f"Score-share nanobody avg apply raised exception (epoch={epoch}): {e}; "
+                    f"using local scores for nanobodies"
+                )
 
         return score_dict
 
