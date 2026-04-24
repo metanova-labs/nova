@@ -82,6 +82,28 @@ def _safe_float(val) -> Optional[float]:
         return None
 
 
+def _strip_none_metrics(
+    avgs: Dict[str, Dict[str, Dict[str, Any]]],
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Drop None-valued metrics from a {item: {protein: {metric: value}}} dict for cleaner logs."""
+    return {
+        item: {
+            protein: {m: v for m, v in metrics.items() if v is not None}
+            for protein, metrics in targets.items()
+        }
+        for item, targets in avgs.items()
+    }
+
+
+def _rekey_by_sequence(
+    avgs: Dict[str, Dict[str, Dict[str, Any]]],
+    uid_to_hash_seq: Dict[int, Dict[str, str]],
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Rekey a hash-keyed averages dict by the corresponding sequence for readable logs."""
+    hash_to_seq = {h: s for id_map in uid_to_hash_seq.values() for h, s in id_map.items()}
+    return {hash_to_seq.get(h, h): targets for h, targets in avgs.items()}
+
+
 # ---------------------------------------------------------------------------
 # Generic per-target validation builder
 # ---------------------------------------------------------------------------
@@ -351,6 +373,17 @@ async def apply_external_scores(
                     f"using local scores for nanobodies"
                 )
                 hash_to_target_avgs = None
+
+        if name_to_target_avgs:
+            bt.logging.debug(
+                f"Score-share molecule averages from API (epoch={epoch}): "
+                f"{_strip_none_metrics(name_to_target_avgs)}"
+            )
+        if hash_to_target_avgs:
+            bt.logging.debug(
+                f"Score-share nanobody averages from API (epoch={epoch}): "
+                f"{_strip_none_metrics(_rekey_by_sequence(hash_to_target_avgs, uid_to_nano_id))}"
+            )
 
         if uid_to_mol_id and name_to_target_avgs is not None:
             try:
