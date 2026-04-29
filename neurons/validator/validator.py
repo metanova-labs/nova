@@ -141,16 +141,11 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 boltz=boltz,
                 boltzgen=boltzgen,
                 subtensor=subtensor,
-                epoch_end_block=current_block,
-                test_mode=True,
+                epoch_end_block=current_block + config.epoch_length,
+                test_mode=test_mode,
+                target_proteins=small_molecule_target,
             )
-            boltz_score_averages = {
-                uid: round(data.get('boltz_score'), 6)
-                for uid, data in score_dict.items()
-                if data.get('boltz_score') is not None
-            }
-            bt.logging.debug(f"boltz_score_averages: {boltz_score_averages}")
-
+            
         # update scores for nanobodies
         if valid_nanobodies_by_uid and boltzgen and boltzgen.per_nanobody_components:
             rank_mode = getattr(config, "boltzgen_rank_mode", None) or getattr(config, "rank_mode", "min")
@@ -159,7 +154,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 valid_nanobodies_by_uid,
                 config,
             )
-            bt.logging.debug(f"Raw boltzgen scores: {per_nanobody_components}")
+            bt.logging.debug(f"Final boltzgen scores: {per_nanobody_components}")
             inference._merge_boltzgen_into_score_dict(
                 score_dict,
                 final_boltzgen_scores,
