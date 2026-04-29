@@ -41,6 +41,26 @@ boltzgen = None
 btd = QuicknetBittensorDrandTimelock()
 GITHUB_HEADERS = {}
 
+async def connect_subtensor(network):
+    subtensor = bt.async_subtensor(network=network)
+    await subtensor.initialize()
+    return subtensor
+
+async def reconnect_subtensor(subtensor, network):
+    if subtensor is not None:
+        await subtensor.close()
+    return await connect_subtensor(network)
+
+async def call_subtensor(subtensor, network, rpc_fn, timeout_s=10):
+    try:
+        result = await asyncio.wait_for(rpc_fn(subtensor), timeout=timeout_s)
+        return result, subtensor
+    except Exception as e:
+        bt.logging.warning(f"Subtensor RPC reconnect triggered due to {type(e).__name__}: {e}")
+        subtensor = await reconnect_subtensor(subtensor, network)
+        result = await asyncio.wait_for(rpc_fn(subtensor), timeout=timeout_s)
+        return result, subtensor
+
 async def process_epoch(config, current_block, metagraph, subtensor, wallet):
     """
     Process a single epoch end-to-end.
@@ -248,8 +268,7 @@ async def main(config):
     local_input = bool(getattr(config, 'local_input_file', None))
     
     # Initialize subtensor client
-    subtensor = bt.async_subtensor(network=config.network)
-    await subtensor.initialize()
+    subtensor = await connect_subtensor(config.network)
     
     # Wallet + registration check (skipped in test mode)
     wallet = None
@@ -277,8 +296,16 @@ async def main(config):
     last_logged_blocks_remaining = None
     while True:
         try:
-            metagraph = await subtensor.metagraph(config.netuid)
-            current_block = await subtensor.get_current_block()
+            metagraph, subtensor = await call_subtensor(
+                subtensor,
+                config.network,
+                lambda st: st.metagraph(config.netuid),
+            )
+            current_block, subtensor = await call_subtensor(
+                subtensor,
+                config.network,
+                lambda st: st.get_current_block(),
+            )
 
             # Only wait for epoch boundary if not reading from local input
             if local_input or current_block % config.epoch_length == 0:
@@ -332,12 +359,12 @@ async def main(config):
  
         except asyncio.CancelledError:
             bt.logging.info("Resetting subtensor connection.")
-            subtensor = bt.async_subtensor(network=config.network)
-            await subtensor.initialize()
+            subtensor = await reconnect_subtensor(subtensor, config.network)
             await asyncio.sleep(1)
             continue
         except Exception as e:
             bt.logging.error(f"Error in main loop: {e}")
+            subtensor = await reconnect_subtensor(subtensor, config.network)
             await asyncio.sleep(3)
 
 if __name__ == "__main__":
