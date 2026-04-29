@@ -54,7 +54,7 @@ cp -r data/igblast_internal_data/camelid external_tools/igblast/internal_data/
 cp -r data/igblast_database/database external_tools/igblast
 
 # download combinatorial db
-[ -d combinatorial_db/molecules.sqlite ] && wget -q https://huggingface.co/datasets/Metanova/Mol-Rxn-DB/resolve/main/molecules.sqlite?download=true -O combinatorial_db/molecules.seqlite
+wget -q https://huggingface.co/datasets/Metanova/Mol-Rxn-DB/resolve/main/molecules.sqlite?download=true -O combinatorial_db/molecules.sqlite
 
 # Check if .venv and timelock exist and delete them if they do (for reinstalling)
 [ -d .venv ] && rm -rf .venv

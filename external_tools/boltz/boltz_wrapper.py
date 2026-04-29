@@ -89,9 +89,9 @@ properties:
                 mol_idx = _get_record_id(smiles, self.base_seed)
 
                 self.unique_molecules[smiles].append((uid, mol_idx))
-        bt.logging.info(f"Unique Boltz candidates: {self.unique_molecules}")
+        bt.logging.debug(f"Unique Boltz candidates: {self.unique_molecules}")
 
-        bt.logging.info(f"Writing {len(self.unique_molecules)*len(self.subnet_config['small_molecule_target'])} unique molecules to input directory")
+        bt.logging.debug(f"Writing {len(self.unique_molecules)*len(self.subnet_config['small_molecule_target'])} unique molecules to input directory")
         try:
             for target, clip_interval in zip(self.subnet_config['small_molecule_target'], self.subnet_config['small_molecule_target_clip_interval']):
                 protein_sequence = get_sequence_from_protein_code(target, clip_interval)
@@ -99,7 +99,7 @@ properties:
                     yaml_content = self._create_yaml_content(target, protein_sequence, smiles)
                     with open(os.path.join(self.input_dir, f"{ids[0][1]}_{target}.yaml"), "w") as f:
                         f.write(yaml_content)
-            bt.logging.info(f"YAML files written successfully")
+            bt.logging.debug(f"YAML files written successfully")
         except Exception as e:
             bt.logging.error(f"Error writing YAML files: {e}")
             bt.logging.error(traceback.format_exc())
@@ -230,7 +230,7 @@ properties:
     def _distribute_scores(self, scores: dict) -> None:
         self.per_molecule_components = {}
         self.final_boltz_scores = {}
-        bt.logging.info(f"molecules: {self.unique_molecules}")
+        #bt.logging.debug(f"molecules: {self.unique_molecules}")
 
         for smiles, id_list in self.unique_molecules.items():
             try:
