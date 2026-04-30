@@ -17,7 +17,7 @@ openmm==8.5.0
 pandas==2.2.3
 pdbfixer==1.12.0
 promb==1.0.2
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 rdkit==2024.9.4
 requests>=2.33.0
 scikit-learn==1.6.1
