@@ -174,6 +174,10 @@ def _build_target_validations(
     validations: List[Dict[str, Any]] = []
     uid_to_id_item: Dict[int, Dict[str, str]] = {}
 
+    # Dedup posted entries by (id, protein)
+    seen: set[Tuple[str, str]] = set()
+    duplicate_count = 0
+
     for uid, item_to_proteins in per_components.items():
         item_data = valid_items_by_uid.get(uid) or {}
         items_list = item_data.get(item_key, []) or []
@@ -188,17 +192,30 @@ def _build_target_validations(
             if not id_val:
                 continue
 
+            # record uid -> (id, item) for downstream avg application
             uid_to_id_item.setdefault(uid, {})[id_val] = item
 
             for protein_name, metrics in protein_metrics.items():
+                key = (id_val, protein_name)
+                if key in seen:
+                    duplicate_count += 1
+                    continue
+                seen.add(key)
+
                 entry: Dict[str, Any] = {
                     id_field_name: id_val,
                     "target_protein": protein_name,
                 }
-                for key in metric_keys:
-                    entry[key] = _safe_float(metrics.get(key))
+                for metric_key in metric_keys:
+                    entry[metric_key] = _safe_float(metrics.get(metric_key))
 
                 validations.append(entry)
+
+    if duplicate_count:
+        bt.logging.debug(
+            f"_build_target_validations({id_field_name}): dropped {duplicate_count} "
+            f"duplicate (id, protein) row(s); kept {len(validations)} unique entry/entries."
+        )
 
     return validations, uid_to_id_item
 
