@@ -119,7 +119,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 "molecule_scores": [[] for _ in range(len(small_molecule_target))],
                 "nanobody_scores": [[] for _ in range(len(nanobody_target))],
                 "entropy": None,
-                "block_submitted": None,
+                "block_submitted": uid_to_data[uid].get("block_submitted"),
                 "push_time": uid_to_data[uid].get("push_time", '')
             }
             for uid in uid_to_data
