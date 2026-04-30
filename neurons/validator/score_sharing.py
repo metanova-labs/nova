@@ -118,10 +118,9 @@ def _group_validations_by_protein(entries: List[Dict[str, Any]]) -> Dict[str, Li
     for entry in entries:
         protein = entry.get("target_protein", "<unknown>")
         validator = entry.get("validator") or {}
-        cleaned: Dict[str, Any] = {
-            "validator_uid": validator.get("id"),
-            "validator_hotkey": validator.get("full_name"),
-        }
+        cleaned: Dict[str, Any] = {}
+        if validator.get("full_name"):
+            cleaned["validator_name"] = validator.get("full_name")
         for k, v in entry.items():
             if k in ("target_protein", "validator", "created_at"):
                 continue
