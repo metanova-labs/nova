@@ -68,6 +68,12 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
     global boltz
     test_mode = bool(getattr(config, 'test_mode', False))
     try:
+        # clean up temp files if there's any left from previous epoch
+        for model in ["boltz", "boltzgen"]:
+            tmp_files_dir = os.path.join(BASE_DIR, "external_tools", model, f"{model}_tmp_files")
+            if os.path.exists(tmp_files_dir):
+                shutil.rmtree(tmp_files_dir)
+
         start_block = current_block - config.epoch_length
         start_block_hash = await subtensor.determine_block_hash(start_block)
         final_block_hash = await subtensor.determine_block_hash(current_block)
@@ -231,22 +237,15 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             bt.logging.error(f"Failed to submit results to dashboard API: {e}")
             bt.logging.error(traceback.format_exc())            
 
-        # clean up temporary files if they exist
-        try:
-            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files"))
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            bt.logging.warning(f"Error cleaning up temporary files: {e}")
-
-        try:
-            shutil.rmtree(os.path.join(BASE_DIR, "external_tools", "boltz", "boltz_tmp_files"))
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            bt.logging.warning(f"Error cleaning up temporary files: {e}")
-
-        bt.logging.info(f"Epoch {current_epoch} scoring finished.")
+        for model in ["boltz", "boltzgen"]:
+            tmp_files_dir = os.path.join(BASE_DIR, "external_tools", model, f"{model}_tmp_files")
+            if os.path.exists(tmp_files_dir):
+                try:
+                    shutil.rmtree(tmp_files_dir)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    bt.logging.error(f"Error cleaning up temporary files for {model}: {e}")
 
         return winner_molecules, winner_nanobodies, uid_to_data
 
