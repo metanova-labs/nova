@@ -1,7 +1,7 @@
 torch>=2.2
 numpy>=1.26,<2.0
 rdkit>=2024.3.2
-requests==2.32.3
+requests==2.33.0
 pandas>=2.2.2
 einops==0.8.0
 einx==0.3.0
