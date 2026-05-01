@@ -200,6 +200,8 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         winner_molecules = determine_winner(score_dict, config=config, item_type="molecule")
         winner_nanobodies = determine_winner(score_dict, config=config, item_type="nanobody")
 
+        bt.logging.info(f"Epoch {current_epoch} scoring finished.")
+
         # Yield so ws heartbeats can run before the next RPC
         await asyncio.sleep(0)
 
