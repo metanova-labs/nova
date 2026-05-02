@@ -23,7 +23,7 @@ from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
 from neurons.validator.molecule_validity import validate_molecules_and_calculate_entropy
 from neurons.validator.nanobody_validity import validate_nanobodies
-from neurons.validator.ranking import calculate_scores_for_type, determine_winner
+from neurons.validator.ranking import calculate_scores_for_type, rank_uids
 from neurons.validator.monitoring import monitor_validator
 from neurons.validator.save_data import submit_epoch_results
 from neurons.validator.score_sharing import apply_external_scores
@@ -196,9 +196,17 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             config=config
         )
        
-        # Determine winner for each model
-        winner_molecules = determine_winner(score_dict, config=config, item_type="molecule")
-        winner_nanobodies = determine_winner(score_dict, config=config, item_type="nanobody")
+        # Rank all uids for each model and pick rank-1 as the winner
+        molecule_ranks = rank_uids(score_dict, config=config, item_type="molecule")
+        nanobody_ranks = rank_uids(
+            score_dict,
+            config=config,
+            item_type="nanobody",
+            per_nanobody_components=getattr(boltzgen, "per_nanobody_components", None),
+        )
+
+        winner_molecules = next((uid for uid, r in molecule_ranks.items() if r == 1), None)
+        winner_nanobodies = next((uid for uid, r in nanobody_ranks.items() if r == 1), None)
 
         bt.logging.info(f"Epoch {current_epoch} scoring finished.")
 
@@ -222,6 +230,7 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                     valid_molecules_by_uid=valid_molecules_by_uid,
                     valid_nanobodies_by_uid=valid_nanobodies_by_uid,
                     score_dict=score_dict,
+                    nanobody_ranks=nanobody_ranks,
                 )
                 # only our validator creates protein viz files
                 try:

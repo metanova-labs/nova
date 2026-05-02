@@ -5,6 +5,9 @@ from typing import Optional
 import bittensor as bt
 
 
+NANOBODY_TIEBREAK_CATEGORIES = ("confidence", "physical_interaction", "developability")
+
+
 def calculate_scores_for_type(
     score_dict: dict[int, dict[str, list[list[float]]]],
     valid_items_by_uid: dict[int, dict[str, list[str]]],
@@ -73,98 +76,150 @@ def calculate_scores_for_type(
 
     return score_dict
 
-def determine_winner(score_dict: dict[int, dict[str, list[list[float]]]], config: dict, item_type: str) -> Optional[int]:
-    """
-    Determines the winning UID based on final score for a given item type.
-    In case of ties, earliest submission time is used as the tiebreaker.
-    
-    Args:
-        score_dict: Dictionary containing final scores for each UID
-        config: subnet config dict
-        type: item type to determine winner for (molecule or nanobody)
-    Returns:
-        Optional[int]: Winning UID or None if no valid scores found
-    """
+def _parse_timestamp(ts: str, uid: int) -> datetime.datetime:
+    try:
+        return datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    except Exception as e:
+        bt.logging.warning(f"Failed to parse timestamp '{ts}' for UID={uid}: {e}")
+        return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
 
+
+def _block_or_inf(block) -> float:
+    """Treat missing/None block_submitted as +inf so it loses tie-breakers."""
+    if block is None:
+        return math.inf
+    try:
+        return float(block)
+    except (TypeError, ValueError):
+        return math.inf
+
+
+def _config_get(config, key: str, default):
+    """Read a key from either an attribute-style config or a plain dict."""
+    val = getattr(config, key, None)
+    if val is not None:
+        return val
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return default
+
+
+def _nanobody_category_score(
+    per_nanobody_components: Optional[dict],
+    uid: int,
+    category: str,
+) -> float:
+    """
+    Sum {category}_rank_sum across every (sequence, target) combination the UID
+    submitted, lower is better
+
+    Returns +inf if the components are missing so the UID loses category-based
+    tie-breakers gracefully.
+    """
+    if not per_nanobody_components:
+        return math.inf
+
+    uid_components = per_nanobody_components.get(uid)
+    if not uid_components:
+        return math.inf
+
+    metric_key = f"{category}_rank_sum"
+    total = 0.0
+    found_any = False
+    for seq_components in uid_components.values():
+        for target_components in seq_components.values():
+            value = target_components.get(metric_key)
+            if value is None:
+                continue
+            try:
+                total += float(value)
+                found_any = True
+            except (TypeError, ValueError):
+                continue
+
+    return total if found_any else math.inf
+
+
+def rank_uids(
+    score_dict: dict[int, dict[str, list[list[float]]]],
+    config,
+    item_type: str,
+    per_nanobody_components: Optional[dict] = None,
+) -> dict[int, int]:
+    """
+    Rank UIDs that have a valid finite ``final_{item_type}_score``.
+
+    Returns a dict ``{uid: rank}`` where ``rank == 1`` is the best. UIDs without
+    a submission for ``item_type`` (or whose final score is missing/+/-inf) are
+    omitted from the result.
+
+    Tie-breaking:
+      * molecules: ``block_submitted`` -> ``push_time`` -> ``uid``.
+      * nanobodies: confidence rank -> physical interaction rank ->
+        developability rank (each computed by summing ``{category}_rank_sum``
+        from ``per_nanobody_components`` across the UID's seq/target pairs;
+        lower is better) -> ``block_submitted`` -> ``push_time`` -> ``uid``.
+    """
     if item_type == "molecule":
-        mode = getattr(config, 'boltz_mode', None) or (config.get('boltz_mode', 'max') if isinstance(config, dict) else 'max')
+        mode = _config_get(config, 'boltz_mode', 'max')
     elif item_type == "nanobody":
-        mode = getattr(config, 'boltzgen_rank_mode', None) or (config.get('boltzgen_rank_mode', 'min') if isinstance(config, dict) else 'min')
+        mode = _config_get(config, 'boltzgen_rank_mode', 'min')
     else:
         bt.logging.error(f"Invalid item type: {item_type}")
-        return None
+        return {}
 
-    best_uids = []
-    best_score = -math.inf if mode == "max" else math.inf
+    score_key = f"final_{item_type}_score"
 
-    def parse_timestamp(uid):
-        ts = score_dict[uid].get('push_time', '')
-        try:
-            return datetime.datetime.fromisoformat(ts)
-        except Exception as e:
-            bt.logging.warning(f"Failed to parse timestamp '{ts}' for UID={uid}: {e}")
-            return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
-
-    def tie_breaker(tied_uids: list[int], best_score: float, item_type: str, print_message: bool = True):
-        # Sort by block number first, then push time, then uid to ensure deterministic result
-        winner = sorted(tied_uids, key=lambda uid: (
-            score_dict[uid].get('block_submitted', float('inf')), 
-            parse_timestamp(uid), 
-            uid
-        ))[0]
-        
-        winner_block = score_dict[winner].get('block_submitted')
-        current_epoch = winner_block // 361 if winner_block else None
-        push_time = score_dict[winner].get('push_time', '')
-        
-        tiebreaker_message = f"Epoch {current_epoch} {item_type} tiebreaker winner: UID={winner}, score={best_score}, block={winner_block}"
-        if push_time:
-            tiebreaker_message += f", push_time={push_time}"
-            
-        if print_message:
-            bt.logging.info(tiebreaker_message)
-            
-        return winner
-    
-    # Find highest final score
+    eligible: list[int] = []
     for uid, data in score_dict.items():
-        if f"final_{item_type}_score" not in data:
+        if score_key not in data:
             continue
-        score = data[f'final_{item_type}_score']
+        score = data[score_key]
+        if score is None:
+            continue
+        if score == math.inf or score == -math.inf:
+            continue
+        eligible.append(uid)
 
-        if mode == "max":
-            if score > best_score:
-                best_score = score
-                best_uids = [uid]
-            elif score == best_score:
-                best_uids.append(uid)
-        elif mode == "min":
-            if score < best_score:
-                best_score = score
-                best_uids = [uid]
-            elif score == best_score:
-                best_uids.append(uid)
-    
-    if not best_uids:
-        bt.logging.debug(f"score_dict: {score_dict}")
-        bt.logging.info(f"No valid {item_type} winner found (all scores -inf/inf or no submissions).")
-        return None
+    if not eligible:
+        bt.logging.info(f"No valid {item_type} submissions to rank.")
+        return {}
 
-    # Treat all -inf or inf as no valid winners
-    if best_score == -math.inf or best_score == math.inf:
-        return None
-    
-    # Select winner
-    if best_uids:
-        if len(best_uids) == 1:
-            winner_block = score_dict[best_uids[0]].get('block_submitted')
-            current_epoch = winner_block // 361 if winner_block else None
-            bt.logging.info(f"Epoch {current_epoch} {item_type} winner: UID={best_uids[0]}, winning_score={best_score}")
-            winner = best_uids[0]
+    def sort_key(uid: int):
+        data = score_dict[uid]
+        score = data[score_key]
+        primary = -score if mode == "max" else score
+
+        if item_type == "nanobody":
+            category_scores = tuple(
+                _nanobody_category_score(per_nanobody_components, uid, cat)
+                for cat in NANOBODY_TIEBREAK_CATEGORIES
+            )
         else:
-            winner = tie_breaker(best_uids, best_score, item_type, print_message=True)
-    else:
-        winner = None
-    
-    return winner
-    
+            category_scores = ()
+
+        return (
+            primary,
+            *category_scores,
+            _block_or_inf(data.get('block_submitted')),
+            _parse_timestamp(data.get('push_time', '') or '', uid),
+            uid,
+        )
+
+    ordered = sorted(eligible, key=sort_key)
+    ranks = {uid: idx + 1 for idx, uid in enumerate(ordered)}
+
+    winner = ordered[0]
+    winner_data = score_dict[winner]
+    winner_block = winner_data.get('block_submitted')
+    winner_score = winner_data[score_key]
+    epoch_length = _config_get(config, 'epoch_length', 361)
+    current_epoch = winner_block // epoch_length if isinstance(winner_block, int) else None
+    bt.logging.info(
+        f"Epoch {current_epoch} {item_type} ranking: winner UID={winner}, "
+        f"winning_score={winner_score}, block={winner_block}, "
+        f"ranked_uids={len(ranks)}"
+    )
+
+    return ranks
+

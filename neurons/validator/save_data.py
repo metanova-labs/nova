@@ -315,8 +315,10 @@ def _build_submissions_payload(
     valid_molecules_by_uid: dict,
     valid_nanobodies_by_uid: dict,
     score_dict: dict,
+    nanobody_ranks: dict[int, int] | None = None,
 ) -> list[dict]:
     submissions = []
+    nanobody_ranks = nanobody_ranks or {}
 
     # Collect all UIDs that have either molecules or nanobodies
     all_uids = set(uid_to_data.keys())
@@ -376,6 +378,7 @@ def _build_submissions_payload(
             "blocks_elapsed": blocks_elapsed,
             "molecule_final_score": molecule_final_score,
             "nanobody_final_score": nanobody_final_score,
+            "nanobody_leaderboard_rank": nanobody_ranks.get(uid),
             "molecules": molecule_details,
             "nanobodies": nanobody_details,
         })
@@ -578,12 +581,14 @@ async def submit_epoch_results(
     valid_molecules_by_uid: dict,
     valid_nanobodies_by_uid: dict,
     score_dict: dict,
+    nanobody_ranks: dict[int, int] | None = None,
 ) -> None:
     competition = _build_competition_payload(config, current_epoch)
     submissions = _build_submissions_payload(
         config, metagraph, boltz, boltzgen, current_block, start_block,
         uid_to_data, valid_molecules_by_uid, valid_nanobodies_by_uid,
         score_dict,
+        nanobody_ranks=nanobody_ranks,
     )
 
     if not submissions:
