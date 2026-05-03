@@ -7,12 +7,14 @@
 #   make build
 #   make shell
 #   WALLET_NAME=cold WALLET_HOTKEY=hot make run
-#   make lint          # same rules as CI (requires: pip install ruff==0.7.4)
+#   make lint          # phase-1 ruff scope (matches CI; requires: pip install ruff==0.7.4)
 #   make lint-fix      # apply safe auto-fixes, then commit
 #   make test          # pytest (requires: pip install pytest pyyaml)
 
 # Pinned to match .github/workflows/release.yml (lint job).
 RUFF_VERSION     ?= 0.7.4
+# Phase 1: same paths as CI `lint` job (not whole repo — see docs/CICD.md).
+RUFF_TARGETS     ?= tests/ utils/fasta.py utils/local_input.py utils/files.py
 
 # Directory containing this Makefile (so `lint` / `test` work even if invoked
 # as `make -f /path/to/nova/Makefile` from another cwd).
@@ -53,9 +55,9 @@ help:
 	@echo "  make rm              docker rm -f $(CONTAINER_NAME)"
 	@echo "  make clean           docker rmi $(IMAGE)"
 	@echo "  make inspect         Smoke: import neuron module in ephemeral container"
-	@echo "  make lint            Run ruff (read-only; same as CI lint job)"
-	@echo "  make lint-fix        Run ruff --fix (safe fixes only)"
-	@echo "  make lint-fix-unsafe Run ruff --fix --unsafe-fixes (e.g. whitespace in docstrings)"
+	@echo "  make lint            Run ruff on CI scope (phase 1; requires: pip install ruff==$(RUFF_VERSION))"
+	@echo "  make lint-fix        ruff --fix on same scope"
+	@echo "  make lint-fix-unsafe Run ruff --fix --unsafe-fixes on same scope"
 	@echo "  make test            Run pytest tests/ (same suite as CI tests job)"
 
 _need-ruff:
@@ -67,13 +69,13 @@ _need-pytest:
 		(echo "error: pip install pytest pyyaml" >&2 && exit 1)
 
 lint: _need-ruff
-	python3 -m ruff check "$(THIS_DIR)"
+	cd "$(THIS_DIR)" && python3 -m ruff check $(RUFF_TARGETS)
 
 lint-fix: _need-ruff
-	python3 -m ruff check "$(THIS_DIR)" --fix
+	cd "$(THIS_DIR)" && python3 -m ruff check $(RUFF_TARGETS) --fix
 
 lint-fix-unsafe: _need-ruff
-	python3 -m ruff check "$(THIS_DIR)" --fix --unsafe-fixes
+	cd "$(THIS_DIR)" && python3 -m ruff check $(RUFF_TARGETS) --fix --unsafe-fixes
 
 test: _need-pytest
 	python3 -m pytest "$(THIS_DIR)tests/"

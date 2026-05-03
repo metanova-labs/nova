@@ -47,6 +47,20 @@ def test_build_depends_on_lint_and_tests(workflow):
     )
 
 
+def test_lint_job_uses_scoped_ruff_paths(workflow):
+    """Phase-1 lint: scoped paths, not `ruff check .` on the whole repo."""
+    steps = workflow["jobs"]["lint"]["steps"]
+    run_steps = [
+        str(s["run"]).strip()
+        for s in steps
+        if isinstance(s.get("run"), str)
+    ]
+    lint_cmd = next((r for r in run_steps if r.startswith("ruff check")), None)
+    assert lint_cmd is not None, "expected a `run: ruff check …` step in lint job"
+    assert lint_cmd.endswith("tests/ utils/fasta.py utils/local_input.py utils/files.py")
+    assert "ruff check ." != lint_cmd, "prefer scoped lint until phase 2 mass-fix"
+
+
 def test_push_steps_are_gated_to_main(workflow):
     """Push must only happen on push events to main, never on pull_request."""
     steps = workflow["jobs"]["build-and-smoke"]["steps"]

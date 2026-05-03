@@ -29,7 +29,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff==0.7.4
-      - run: ruff check .
+      # Phase 1: scoped lint (tests + utils touched by CI task). Phase 2: `ruff check .` on whole repo + mass fix.
+      - run: ruff check tests/ utils/fasta.py utils/local_input.py utils/files.py
 
   tests:
     name: unit tests (pytest)

@@ -1,6 +1,9 @@
 # Tooling-only config for the validator repo. We do not declare a Python
 # package here because the runtime environment is the Docker image; the
 # Dockerfile installs deps from `requirements/requirements.txt` directly.
+#
+# CI lint (phase 1) runs ruff only on tests/ + selected utils/*.py — see
+# .github/workflows/release.yml. Phase 2: widen to `ruff check .` on the whole repo.
 
 [tool.ruff]
 line-length = 120
