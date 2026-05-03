@@ -1,13 +1,20 @@
-import asyncio
 import os
 import random
 import requests
 from dotenv import load_dotenv
 import bittensor as bt
-from typing import List, Tuple, Dict
-import csv
+
+from .fasta import read_fasta, write_fasta
+from .local_input import parse_local_input_line
 
 load_dotenv(override=True)
+
+__all__ = [
+    "upload_file_to_github",
+    "read_local_input_file",
+    "read_fasta",
+    "write_fasta",
+]
 
 def upload_file_to_github(filename: str, encoded_content: str):
     # Github configs
@@ -60,15 +67,14 @@ async def read_local_input_file(file_path, config, subtensor):
 
     current_block = await subtensor.get_current_block()
     uid_to_data = {}
-    
+
     with open(file_path, 'r') as file:
         lines = file.readlines()
-    
+
     for line in lines:
-        uid, mol_names, protein_sequences = line.strip().split('|')
-        uid = int(uid)
-        mol_names = mol_names.split(',')
-        protein_sequences = protein_sequences.split(',')
+        if not line.strip():
+            continue
+        uid, mol_names, protein_sequences = parse_local_input_line(line)
         uid_to_data[uid] = {
             'molecules': mol_names,
             'sequences': protein_sequences,
@@ -76,30 +82,3 @@ async def read_local_input_file(file_path, config, subtensor):
             'push_time': ""
         }
     return uid_to_data
-
-def read_fasta(path: str) -> List[Tuple[str, str]]:
-    items: List[Tuple[str, str]] = []
-    name = None
-    seq_parts: List[str] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith(">"):
-                if name is not None:
-                    items.append((name, "".join(seq_parts)))
-                name = line[1:].split()[0]
-                seq_parts = []
-            else:
-                seq_parts.append(line)
-        if name is not None:
-            items.append((name, "".join(seq_parts)))
-    return items
-
-def write_fasta(items: List[Tuple[str, str]], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        for name, seq in items:
-            f.write(f">{name}\n")
-            for i in range(0, len(seq), 80):
-                f.write(seq[i:i+80] + "\n")

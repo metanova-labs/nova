@@ -1,0 +1,37 @@
+# Tooling-only config for the validator repo. We do not declare a Python
+# package here because the runtime environment is the Docker image; the
+# Dockerfile installs deps from `requirements/requirements.txt` directly.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [
+    # Vendored upstream projects — not ours to lint.
+    "external_tools",
+    "NOVA-nanobody-filter",
+    # Local virtualenv (defensive; .gitignore'd anyway).
+    ".venv",
+]
+
+[tool.ruff.lint]
+# Default rules: pycodestyle errors (E) + pyflakes (F).
+# We ignore E402 because the codebase uses the `sys.path.append(BASE_DIR)`
+# bootstrap pattern in entrypoint scripts (e.g. neurons/validator/setup.py),
+# which legitimately requires imports below the path tweak.
+# E501 is delegated to `line-length` above.
+select = ["E", "F", "W"]
+ignore = [
+    "E402",  # module-import-not-at-top-of-file (sys.path.append pattern)
+    "E501",  # line-too-long (handled via line-length)
+    "E741",  # ambiguous variable name (uid, l, I — common in numerical code)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports inside package __init__ are legitimately "unused" at module
+# scope but are the public API surface for the package.
+"**/__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"

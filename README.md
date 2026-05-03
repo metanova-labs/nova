@@ -61,6 +61,25 @@ python3 neurons/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotke
 python3 neurons/validator/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
 ```
 
+### Docker (validator image, dev / CI parity)
+
+Needs Docker with buildx and outbound network (PyPI, Hugging Face, crates.io, Git clones for `timelock` Cargo deps).
+
+On Apple Silicon, build **`linux/amd64`** explicitly (Makefile does this):
+
+```bash
+cp example.env .env   # tune SUBTENSOR_NETWORK, DEVICE_OVERRIDE, keys, …
+make build              # slow first build under emulation
+make inspect            # imports neurons.validator.validator
+make shell              # bash in container
+```
+
+Run the validator foreground (needs real wallet names):
+
+```bash
+WALLET_NAME=… WALLET_HOTKEY=… make run
+```
+
 ## Configuration
 
 The project uses several configuration files:

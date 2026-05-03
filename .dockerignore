@@ -1,0 +1,31 @@
+# Python / tooling
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+
+# SCM / IDE
+.git
+.gitignore
+.idea
+.vscode
+.cursor
+
+# Scratch / local planning (outside docker context usefulness)
+**/plan.md
+
+# Local artifacts rebuilt in image
+**/external_tools/mmseqs/
+**/external_tools/igblast/
+**/external_tools/timelock/
+combinatorial_db/molecules.sqlite
+
+# macOS junk
+.DS_Store
+
+# Env — mount at runtime; do not bake secrets
+.env
+.env.*
