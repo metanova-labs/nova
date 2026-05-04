@@ -127,13 +127,11 @@ def validate_molecules_and_calculate_entropy(
                     entropy = compute_maccs_entropy(valid_smiles)
                     score_dict[uid]["entropy"] = entropy
                     valid_molecules_by_uid[uid] = {"smiles": valid_smiles, "names": valid_names}
-                    score_dict[uid]["block_submitted"] = data["block_submitted"]               
                 except Exception as e:
                     bt.logging.warning(f"UID={uid}: error calculating entropy: {e}")
                     continue
             else:
                 score_dict[uid]["entropy"] = None
-                score_dict[uid]["block_submitted"] = data["block_submitted"]
                 valid_molecules_by_uid[uid] = {"smiles": valid_smiles, "names": valid_names}
             
     return valid_molecules_by_uid
