@@ -14,10 +14,10 @@ from pathlib import Path
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(BASE_DIR)
 
-from auto_updater import AutoUpdater
 from config.config_loader import load_config
 
 from utils import get_challenge_params_from_blockhash, inference, QuicknetBittensorDrandTimelock
+from neurons.validator import lifecycle
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
@@ -279,18 +279,31 @@ async def main(config):
 
     setup_github_auth(GITHUB_HEADERS)
 
-    # Auto-updater setup
-    if os.environ.get('AUTO_UPDATE') == '1':
-        updater = AutoUpdater(logger=bt.logging)
-        asyncio.create_task(updater.start_update_loop())
-        bt.logging.info(f"Auto-updater enabled, checking for updates every {updater.UPDATE_INTERVAL} seconds")
+    if os.environ.get("AUTO_UPDATE") == "1":
+        bt.logging.warning(
+            "AUTO_UPDATE=1 is deprecated — the git-pull AutoUpdater fights Docker/Watchtower deployments. "
+            "Use README-DEPLOY.md (compose + Watchtower) instead. Ignoring."
+        )
+
+    readiness_port = int(os.environ.get("READINESS_PORT", "8080"))
+    if os.environ.get("READINESS_HTTP_DISABLE", "").lower() not in {"1", "true", "yes"}:
+        lifecycle.install_async_signal_handlers()
+        lifecycle.start_http_server(readiness_port)
     else:
-        bt.logging.info("Auto-updater disabled. Set AUTO_UPDATE=1 to enable.")
+        bt.logging.warning(
+            "READINESS_HTTP_DISABLE is set — /ready_to_update unavailable; Watchtower hooks will fail unless "
+            "you provide your own probes. Signals still drain on SIGTERM where supported."
+        )
+        lifecycle.install_async_signal_handlers()
 
     # Main validator loop
     last_logged_blocks_remaining = None
     while True:
         try:
+            if lifecycle.should_exit_now():
+                bt.logging.info("Graceful shutdown: idle safe point (lifecycle drain).")
+                sys.exit(0)
+
             metagraph, subtensor = await call_subtensor(
                 subtensor,
                 config.network,
@@ -304,45 +317,51 @@ async def main(config):
 
             # Only wait for epoch boundary if not reading from local input
             if local_input or current_block % config.epoch_length == 0:
-                # Epoch end - process and set weights
+                # Epoch end — hold lifecycle busy scope until weights + payouts complete.
                 config.update(load_config())
-                epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
-                winner_molecules = None
-                winner_nanobodies = None
-                if epoch_result is None:
-                    pass
-                else:
-                    winner_molecules, winner_nanobodies, uid_to_data = epoch_result
+                async with lifecycle.epoch_busy_scope():
+                    epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                    winner_molecules = None
+                    winner_nanobodies = None
+                    if epoch_result is None:
+                        pass
+                    else:
+                        winner_molecules, winner_nanobodies, uid_to_data = epoch_result
 
-                current_epoch = (current_block // config.epoch_length) - 1
-                if not test_mode:
-                    payouts = await set_weights(winner_molecules, winner_nanobodies, config)
-                    if payouts:
-                        try:
-                            hotkey_payouts = []
-                            for component, uid, proportion in payouts:
-                                hotkey = uid_to_data.get(uid, {}).get("hotkey")
-                                if not hotkey:
-                                    bt.logging.error(
-                                        f"Missing hotkey for payout component={component} uid={uid}; skipping."
-                                    )
-                                    continue
-                                hotkey_payouts.append((component, hotkey, proportion))
+                    current_epoch = (current_block // config.epoch_length) - 1
+                    if not test_mode:
+                        payouts = await set_weights(winner_molecules, winner_nanobodies, config)
+                        if payouts:
+                            try:
+                                hotkey_payouts = []
+                                for component, uid, proportion in payouts:
+                                    hotkey = uid_to_data.get(uid, {}).get("hotkey")
+                                    if not hotkey:
+                                        bt.logging.error(
+                                            f"Missing hotkey for payout component={component} uid={uid}; skipping."
+                                        )
+                                        continue
+                                    hotkey_payouts.append((component, hotkey, proportion))
 
-                            await dispatch_bounty_payouts(
-                                payouts=hotkey_payouts,
-                                subtensor=subtensor,
-                                config=config,
-                                epoch=current_epoch,
-                            )
-                        except Exception as e:
-                            bt.logging.error(f"Error dispatching bounty payouts: {e}")
-                            bt.logging.error(traceback.format_exc())
-                
+                                await dispatch_bounty_payouts(
+                                    payouts=hotkey_payouts,
+                                    subtensor=subtensor,
+                                    config=config,
+                                    epoch=current_epoch,
+                                )
+                            except Exception as e:
+                                bt.logging.error(f"Error dispatching bounty payouts: {e}")
+                                bt.logging.error(traceback.format_exc())
+
+                # If draining, exit promptly now that scoring / payouts finished.
+                if lifecycle.should_exit_now():
+                    bt.logging.info("Graceful shutdown after epoch boundary (lifecycle drain complete).")
+                    sys.exit(0)
+
                 # If using local input, exit after processing
                 if local_input:
                     break
-                
+
             else:
                 # Waiting for epoch
                 blocks_remaining = config.epoch_length - (current_block % config.epoch_length)

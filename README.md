@@ -38,9 +38,9 @@ GITHUB_REPO_BRANCH="repo-branch"
 GITHUB_REPO_OWNER="repo-owner"
 GITHUB_REPO_PATH="" # path within repo or ""
 
-# For validators
+# For validators — bare-metal auto-update via git-pull is discouraged; Docker:
+# deploy flow in README-DEPLOY.md instead of AUTO_UPDATE=1 when using Compose.
 VALIDATOR_API_KEY="your_api_key"
-AUTO_UPDATE="1" # Set to "0" to disable auto-updates (not recommended)
 ```
 
 3. Install dependencies:
@@ -73,6 +73,8 @@ make build              # slow first build under emulation
 make inspect            # imports neurons.validator.validator
 make shell              # bash in container
 ```
+
+Production-style updates from Docker Hub: see [README-DEPLOY.md](README-DEPLOY.md) (`docker-compose.yml` + Watchtower + readiness hooks).
 
 Run the validator foreground (needs real wallet names):
 

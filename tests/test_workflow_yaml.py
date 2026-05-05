@@ -57,7 +57,7 @@ def test_lint_job_uses_scoped_ruff_paths(workflow):
     ]
     lint_cmd = next((r for r in run_steps if r.startswith("ruff check")), None)
     assert lint_cmd is not None, "expected a `run: ruff check …` step in lint job"
-    assert lint_cmd.endswith("tests/ utils/fasta.py utils/local_input.py utils/files.py")
+    assert lint_cmd.endswith("tests/ utils/fasta.py utils/local_input.py utils/files.py neurons/validator/lifecycle.py")
     assert "ruff check ." != lint_cmd, "prefer scoped lint until phase 2 mass-fix"
 
 

@@ -1,0 +1,41 @@
+# NOVA validator + Watchtower rolling updates from Docker Hub.
+# Prerequisites: README-DEPLOY.md (``.env``, ``${WALLET_BIND}``, NVIDIA toolkit on Linux).
+services:
+  validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${VALIDATOR_IMAGE:-nova-validator:local}
+    container_name: nova-validator
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      READINESS_PORT: "${READINESS_PORT:-8080}"
+    stop_signal: SIGTERM
+    stop_grace_period: 30m
+    volumes:
+      - ${WALLET_BIND:-/tmp/nova-wallets}:/root/.bittensor/wallets:ro
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.lifecycle.pre-update: "/app/nova/scripts/pre-update.sh"
+      com.centurylinklabs.watchtower.lifecycle.pre-update-timeout: "120"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: nova-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LIFECYCLE_HOOKS: "true"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"

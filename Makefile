@@ -14,7 +14,7 @@
 # Pinned to match .github/workflows/release.yml (lint job).
 RUFF_VERSION     ?= 0.7.4
 # Phase 1: same paths as CI `lint` job (not whole repo — see docs/CICD.md).
-RUFF_TARGETS     ?= tests/ utils/fasta.py utils/local_input.py utils/files.py
+RUFF_TARGETS     ?= tests/ utils/fasta.py utils/local_input.py utils/files.py neurons/validator/lifecycle.py
 
 # Directory containing this Makefile (so `lint` / `test` work even if invoked
 # as `make -f /path/to/nova/Makefile` from another cwd).
@@ -26,7 +26,10 @@ CONTAINER_NAME   ?= nova-validator-dev
 ENV_FILE         ?= $(CURDIR)/.env
 
 .PHONY: default help build shell run run-test run-local run-bg logs stop rm clean inspect \
-	lint lint-fix lint-fix-unsafe test _need-ruff _need-pytest
+	lint lint-fix lint-fix-unsafe test _need-ruff _need-pytest \
+	compose-config compose-up compose-down compose-logs compose-ready
+
+COMPOSE_FILE     := $(THIS_DIR)/docker-compose.yml
 
 ENV_FLAGS        := $(shell test -f "$(ENV_FILE)" && echo --env-file "$(ENV_FILE)" || true)
 
@@ -59,6 +62,11 @@ help:
 	@echo "  make lint-fix        ruff --fix on same scope"
 	@echo "  make lint-fix-unsafe Run ruff --fix --unsafe-fixes on same scope"
 	@echo "  make test            Run pytest tests/ (same suite as CI tests job)"
+	@echo "  make compose-config  docker compose config -q"
+	@echo "  make compose-up      docker compose up -d --build (see README-DEPLOY.md)"
+	@echo "  make compose-down    docker compose down"
+	@echo "  make compose-logs    follow validator + watchtower logs"
+	@echo "  make compose-ready   curl /ready_to_update inside running validator svc"
 
 _need-ruff:
 	@python3 -c "import ruff" 2>/dev/null || \
@@ -79,6 +87,22 @@ lint-fix-unsafe: _need-ruff
 
 test: _need-pytest
 	python3 -m pytest "$(THIS_DIR)tests/"
+
+compose-config:
+	docker compose -f "$(COMPOSE_FILE)" config -q
+
+compose-up:
+	docker compose -f "$(COMPOSE_FILE)" up -d --build
+
+compose-down:
+	docker compose -f "$(COMPOSE_FILE)" down
+
+compose-logs:
+	docker compose -f "$(COMPOSE_FILE)" logs -f validator watchtower
+
+compose-ready:
+	docker compose -f "$(COMPOSE_FILE)" exec -T validator \
+		sh -lc 'curl -fsS "http://127.0.0.1:$${READINESS_PORT:-8080}/ready_to_update"'
 
 build:
 	docker build --platform $(PLATFORM) -t $(IMAGE) "$(CURDIR)"

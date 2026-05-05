@@ -104,8 +104,16 @@ COPY . .
 
 ENV PATH="${NOVA_HOME}/.venv/bin:${NOVA_HOME}/external_tools/mmseqs/bin:${NOVA_HOME}/external_tools/igblast/bin:${PATH}"
 ENV PYTHONPATH=${NOVA_HOME}
+ENV READINESS_PORT=8080
+
+RUN chmod +x "${NOVA_HOME}/scripts/pre-update.sh"
 
 WORKDIR ${NOVA_HOME}
+
+STOPSIGNAL SIGTERM
+EXPOSE 8080
+HEALTHCHECK --interval=60s --timeout=5s --start-period=300s --retries=3 \
+  CMD sh -ec 'curl -fsS "http://127.0.0.1:${READINESS_PORT}/healthz" >/dev/null'
 
 ENTRYPOINT ["/app/nova/.venv/bin/python3", "neurons/validator/validator.py"]
 CMD []
