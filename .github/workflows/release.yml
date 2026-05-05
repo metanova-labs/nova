@@ -41,7 +41,10 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest==8.3.4 pyyaml==6.0.2
       - name: Validate docker compose file
-        run: docker compose -f docker-compose.yml config -q
+        run: |
+          # compose.yml references env_file: .env (real deploy); CI checkout has no secrets file.
+          touch .env
+          docker compose -f docker-compose.yml config -q
       - run: pytest tests/
 
   build-and-smoke:
