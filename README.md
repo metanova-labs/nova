@@ -55,7 +55,7 @@ source .venv/bin/activate
 
 # Run your script:
 # miner:
-python3 neurons/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.info
+python3 neurons/miner/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.info
 
 # validator:
 python3 neurons/validator/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
