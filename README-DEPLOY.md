@@ -5,8 +5,7 @@ This guide covers deployment where the image comes from Docker Hub (`latest`, `m
 ## Prerequisites
 
 1. Linux with Docker + [Compose v2](https://docs.docker.com/compose/) and, when using a GPU, the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
-2. A host directory holding `.bittensor/wallets` (Compose mounts it read-only at `/root/.bittensor/wallets:ro`).
-3. An `.env` file at the repo root (start from `example.env`).
+2. An `.env` file at the repo root (start from `example.env`).
 
 ## Relevant variables
 
@@ -42,24 +41,24 @@ Operators who remove `watchtower` from their local compose must manage rollouts 
 
 ```mermaid
 flowchart TD
-  Watchtower[Watchtower_poll_cycle] --> Detect{New_image_available?}
-  Detect -- "no" --> Sleep[Wait_next_poll]
-  Detect -- "yes" --> PreUpdate[Run_pre-update_hook_in_validator_container]
+  Watchtower[Watchtower polls for updates] --> Detect{New image available?}
+  Detect -- "No" --> Sleep[Wait for next poll]
+  Detect -- "Yes" --> PreUpdate[Run pre-update hook (in validator)]
 
-  PreUpdate --> Curl[pre-update.sh_calls_ready_to_update]
-  Curl --> Ready{HTTP_200?}
-  Ready -- "no_(e.g._423_busy)" --> Skip[Exit_75_skip_rollout_attempt]
+  PreUpdate --> Curl[Call /ready_to_update]
+  Curl --> Ready{Ready (HTTP 200)?}
+  Ready -- "No (e.g. 423 Busy)" --> Skip[Exit 75: skip this rollout]
   Skip --> Sleep
 
-  Ready -- "yes" --> Proceed[Exit_0_proceed_with_rollout]
-  Proceed --> Stop[Docker_sends_SIGTERM_to_validator]
-  Stop --> Drain[Validator_sets_drain_requested]
+  Ready -- "Yes" --> Proceed[Exit 0: proceed with rollout]
+  Proceed --> Stop[Docker sends SIGTERM]
+  Stop --> Drain[Validator enters drain mode]
 
-  Drain --> Busy{In_epoch_busy_scope?}
-  Busy -- "yes" --> WaitSafe[Finish_scoring_weights_payouts]
-  WaitSafe --> Exit[Exit_at_safe_point]
-  Busy -- "no" --> Exit
-  Exit --> Recreate[Watchtower_recreates_validator_with_new_image]
+  Drain --> Busy{In critical epoch work?}
+  Busy -- "Yes" --> WaitSafe[Finish scoring / weights / payouts]
+  WaitSafe --> Exit[Exit at safe point]
+  Busy -- "No" --> Exit
+  Exit --> Recreate[Watchtower restarts with new image]
 ```
 
 ## Quick start
@@ -119,6 +118,36 @@ Deferred as a future extension (out of current scope).
 make build && make inspect
 docker compose config -q
 make test       # quick YAML + readiness regression in unit tests (no daemon)
+```
+
+## Suggested server smoke (single container, test mode)
+
+This is a convenient way to validate the **readiness endpoints** and the **pre-update hook** on a server, without bringing up the full Watchtower stack.
+
+```bash
+# Run the validator container in the background (test mode + local input).
+# Note: `docker compose run` creates a one-off container with a generated name.
+docker compose run -d \
+  -e SUBTENSOR_NETWORK="wss://entrypoint-finney.opentensor.ai:443" \
+  -e AUTO_UPDATE=1 \
+  validator \
+  python3 neurons/validator/validator.py \
+  --test_mode \
+  --local_input_file /app/nova/example_local_input \
+  --wallet.name dummy \
+  --wallet.hotkey dummy
+
+# Replace <container_name> with the one-off container name from:
+#   docker ps --format '{{.Names}}' | head -n 1
+
+# 1) /healthz (pretty, with headers)
+docker exec -it <container_name> sh -lc 'curl -i http://127.0.0.1:8080/healthz'
+
+# 2) /ready_to_update (pretty, with headers)
+docker exec -it <container_name> sh -lc 'curl -i http://127.0.0.1:8080/ready_to_update'
+
+# 3) pre-update hook result (what Watchtower runs)
+docker exec -it <container_name> sh -lc '/app/nova/scripts/pre-update.sh; echo exit_code=$?'
 ```
 
 On Apple Silicon always use `PLATFORM=linux/amd64 make build` as in the main README.
