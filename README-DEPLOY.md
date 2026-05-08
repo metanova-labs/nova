@@ -16,18 +16,19 @@ This guide covers deployment where the image comes from Docker Hub (`latest`, `m
 | `WALLET_BIND`            | Absolute host path to wallets in production. Dev fallback in Compose: `/tmp/nova-wallets` (create and copy wallets there if you need a smoke test). |
 | `VALIDATOR_IMAGE`        | Overrides the Docker image (e.g. `user/nova-validator:latest`). If unset: `nova-validator:local` from `docker compose build`.                       |
 | `READINESS_PORT`         | Defaults to `8080`. Used when `AUTO_UPDATE` enables the readiness HTTP server; align with the image `HEALTHCHECK` and Watchtower’s `/ready_to_update` probe.                                  |
-| `WATCHTOWER_NOTIFICATION_URL` | Shoutrrr URL for Watchtower notifications (`nickfedor/watchtower` runs with `--notifications shoutrrr`). Set a valid URL for your channel (see [Shoutrrr services](https://containrrr.dev/shoutrrr/v0.8/services/overview/)); an empty value may cause Watchtower to fail on startup.  |
+| `WATCHTOWER_NOTIFICATIONS` / `WATCHTOWER_NOTIFICATION_URL` | Optional Shoutrrr notifications for Watchtower. Set both to enable (e.g. `WATCHTOWER_NOTIFICATIONS=shoutrrr` and a valid `WATCHTOWER_NOTIFICATION_URL` per [Shoutrrr services](https://containrrr.dev/shoutrrr/v0.8/services/overview/)). Leave `WATCHTOWER_NOTIFICATIONS` unset or empty to run Watchtower without notifications (URL is ignored). If `WATCHTOWER_NOTIFICATIONS=shoutrrr` but the URL is empty or invalid, Watchtower may fail on startup. |
 | `AUTO_UPDATE`            | Opt-in for safe rollouts: values `1` / `true` / `yes` (case-insensitive) start the readiness HTTP server (`/ready_to_update`, `/healthz`) so Watchtower lifecycle hooks work. Signal handlers (drain on SIGTERM/SIGINT) are always installed. |
 
 ## Watchtower image and polling
 
-The stack uses **[`nickfedor/watchtower`](https://hub.docker.com/r/nickfedor/watchtower)** (maintained fork) instead of the discontinued `containrrr/watchtower` image. The service is configured with CLI flags in [docker-compose.yml](docker-compose.yml):
+The stack uses **[`nickfedor/watchtower`](https://hub.docker.com/r/nickfedor/watchtower)** (maintained fork) instead of the discontinued `containrrr/watchtower` image. The service is configured with CLI flags and optional notification environment variables in [docker-compose.yml](docker-compose.yml):
 
 - `--label-enable` — only labeled containers are monitored (validator has `com.centurylinklabs.watchtower.enable=true`).
 - `--enable-lifecycle-hooks` — runs `scripts/pre-update.sh` before stopping the validator (gates on `/ready_to_update`).
 - `--cleanup` — removes old images after update.
 - `--interval 300` — checks for new images every **5 minutes** (same cadence as the previous `WATCHTOWER_POLL_INTERVAL=300` env).
-- `--notifications shoutrrr` + `WATCHTOWER_NOTIFICATION_URL` — optional outbound notifications; configure a valid Shoutrrr URL or remove those flags from the compose file if you do not want notifications yet.
+- Notifications are opt-in via the env vars `WATCHTOWER_NOTIFICATIONS` and `WATCHTOWER_NOTIFICATION_URL`. Set both to enable Shoutrrr (for example `WATCHTOWER_NOTIFICATIONS=shoutrrr`, `WATCHTOWER_NOTIFICATION_URL=discord://token@id?title=Validator`); leave them unset to run Watchtower silently.
+
 ## Required runtime components
 
 The recommended deployment is the full stack defined in [docker-compose.yml](docker-compose.yml):

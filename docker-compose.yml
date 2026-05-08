@@ -44,7 +44,6 @@ services:
       - --cleanup
       - --interval
       - "300"
-      - --notifications
-      - shoutrrr
     environment:
-      WATCHTOWER_NOTIFICATION_URL: ${WATCHTOWER_NOTIFICATION_URL}
+      WATCHTOWER_NOTIFICATIONS: ${WATCHTOWER_NOTIFICATIONS:-}
+      WATCHTOWER_NOTIFICATION_URL: ${WATCHTOWER_NOTIFICATION_URL:-}

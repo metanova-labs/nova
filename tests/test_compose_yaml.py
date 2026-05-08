@@ -39,9 +39,8 @@ def test_watchtower_lifecycle_hooks(compose_document):
     assert "--cleanup" in cmd
     assert "--interval" in cmd
     assert "300" in cmd
-    assert "--notifications" in cmd
-    assert "shoutrrr" in cmd
     env = wt.get("environment") or {}
+    assert "WATCHTOWER_NOTIFICATIONS" in env
     assert "WATCHTOWER_NOTIFICATION_URL" in env
     volumes = wt.get("volumes") or []
     assert any("docker.sock" in str(v) for v in volumes)
