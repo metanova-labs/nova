@@ -279,22 +279,16 @@ async def main(config):
 
     setup_github_auth(GITHUB_HEADERS)
 
-    if os.environ.get("AUTO_UPDATE") == "1":
-        bt.logging.warning(
-            "AUTO_UPDATE=1 is deprecated — the git-pull AutoUpdater fights Docker/Watchtower deployments. "
-            "Use README-DEPLOY.md (compose + Watchtower) instead. Ignoring."
-        )
-
     readiness_port = int(os.environ.get("READINESS_PORT", "8080"))
-    if os.environ.get("READINESS_HTTP_DISABLE", "").lower() not in {"1", "true", "yes"}:
-        lifecycle.install_async_signal_handlers()
+    lifecycle.install_async_signal_handlers()
+    if os.environ.get("AUTO_UPDATE", "").lower() in {"1", "true", "yes"}:
         lifecycle.start_http_server(readiness_port)
     else:
         bt.logging.warning(
-            "READINESS_HTTP_DISABLE is set — /ready_to_update unavailable; Watchtower hooks will fail unless "
-            "you provide your own probes. Signals still drain on SIGTERM where supported."
+            "AUTO_UPDATE is not enabled — readiness HTTP server not started; "
+            "/ready_to_update and /healthz are unavailable and Watchtower lifecycle hooks will fail. "
+            "Set AUTO_UPDATE=1 in your .env to opt into the Compose + Watchtower auto-update flow."
         )
-        lifecycle.install_async_signal_handlers()
 
     # Main validator loop
     last_logged_blocks_remaining = None

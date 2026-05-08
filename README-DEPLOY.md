@@ -10,18 +10,61 @@ This guide covers deployment where the image comes from Docker Hub (`latest`, `m
 
 ## Relevant variables
 
-| Variable | Purpose |
-|----------|---------|
-| `WALLET_BIND` | Absolute host path to wallets in production. Dev fallback in Compose: `/tmp/nova-wallets` (create and copy wallets there if you need a smoke test). |
-| `VALIDATOR_IMAGE` | Overrides the Docker image (e.g. `user/nova-validator:latest`). If unset: `nova-validator:local` from `docker compose build`. |
-| `READINESS_PORT` | Defaults to `8080`. Must stay aligned with the image `HEALTHCHECK` and with Watchtower’s `/ready_to_update` probe. |
-| `READINESS_HTTP_DISABLE` | `true`/`1` disables the readiness HTTP server — do **not** use this with Watchtower. |
-| `AUTO_UPDATE=1` | Legacy; ignored by `validator.py` and logged as obsolete. |
+
+| Variable                 | Purpose                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WALLET_BIND`            | Absolute host path to wallets in production. Dev fallback in Compose: `/tmp/nova-wallets` (create and copy wallets there if you need a smoke test). |
+| `VALIDATOR_IMAGE`        | Overrides the Docker image (e.g. `user/nova-validator:latest`). If unset: `nova-validator:local` from `docker compose build`.                       |
+| `READINESS_PORT`         | Defaults to `8080`. Used when `AUTO_UPDATE` enables the readiness HTTP server; align with the image `HEALTHCHECK` and Watchtower’s `/ready_to_update` probe.                                  |
+| `WATCHTOWER_NOTIFICATION_URL` | Shoutrrr URL for Watchtower notifications (`nickfedor/watchtower` runs with `--notifications shoutrrr`). Set a valid URL for your channel (see [Shoutrrr services](https://containrrr.dev/shoutrrr/v0.8/services/overview/)); an empty value may cause Watchtower to fail on startup.  |
+| `AUTO_UPDATE`            | Opt-in for safe rollouts: values `1` / `true` / `yes` (case-insensitive) start the readiness HTTP server (`/ready_to_update`, `/healthz`) so Watchtower lifecycle hooks work. Signal handlers (drain on SIGTERM/SIGINT) are always installed. |
+
+## Watchtower image and polling
+
+The stack uses **[`nickfedor/watchtower`](https://hub.docker.com/r/nickfedor/watchtower)** (maintained fork) instead of the discontinued `containrrr/watchtower` image. The service is configured with CLI flags in [docker-compose.yml](docker-compose.yml):
+
+- `--label-enable` — only labeled containers are monitored (validator has `com.centurylinklabs.watchtower.enable=true`).
+- `--enable-lifecycle-hooks` — runs `scripts/pre-update.sh` before stopping the validator (gates on `/ready_to_update`).
+- `--cleanup` — removes old images after update.
+- `--interval 300` — checks for new images every **5 minutes** (same cadence as the previous `WATCHTOWER_POLL_INTERVAL=300` env).
+- `--notifications shoutrrr` + `WATCHTOWER_NOTIFICATION_URL` — optional outbound notifications; configure a valid Shoutrrr URL or remove those flags from the compose file if you do not want notifications yet.
+## Required runtime components
+
+The recommended deployment is the full stack defined in [docker-compose.yml](docker-compose.yml):
+
+- Set **`AUTO_UPDATE=1`** in `.env` so the `validator` starts the readiness HTTP server (`/ready_to_update`, `/healthz`). Watchtower’s `pre-update.sh` depends on that endpoint; without it, lifecycle hooks will fail and rollouts are unsafe.
+- The `watchtower` service is part of the recommended deployment when you want automatic image updates from Docker Hub. It drives safe rollouts by calling `scripts/pre-update.sh`, which probes `/ready_to_update` and exits `75` while the validator is in its critical epoch window.
+
+Operators who remove `watchtower` from their local compose must manage rollouts manually. The in-process `auto_updater.py` git-pull path is not used in this Compose flow.
+
+## Update flow (Watchtower + readiness)
+
+```mermaid
+flowchart TD
+  Watchtower[Watchtower_poll_cycle] --> Detect{New_image_available?}
+  Detect -- "no" --> Sleep[Wait_next_poll]
+  Detect -- "yes" --> PreUpdate[Run_pre-update_hook_in_validator_container]
+
+  PreUpdate --> Curl[pre-update.sh_calls_ready_to_update]
+  Curl --> Ready{HTTP_200?}
+  Ready -- "no_(e.g._423_busy)" --> Skip[Exit_75_skip_rollout_attempt]
+  Skip --> Sleep
+
+  Ready -- "yes" --> Proceed[Exit_0_proceed_with_rollout]
+  Proceed --> Stop[Docker_sends_SIGTERM_to_validator]
+  Stop --> Drain[Validator_sets_drain_requested]
+
+  Drain --> Busy{In_epoch_busy_scope?}
+  Busy -- "yes" --> WaitSafe[Finish_scoring_weights_payouts]
+  WaitSafe --> Exit[Exit_at_safe_point]
+  Busy -- "no" --> Exit
+  Exit --> Recreate[Watchtower_recreates_validator_with_new_image]
+```
 
 ## Quick start
 
 ```bash
-cp example.env .env          # edit SUBTENSOR, keys, etc.
+cp example.env .env          # edit SUBTENSOR, keys, set AUTO_UPDATE=1 for Watchtower + readiness, etc.
 export WALLET_BIND="$HOME/.bittensor/wallets"
 docker compose up -d --build
 docker compose logs -f validator watchtower
@@ -41,8 +84,10 @@ docker compose exec validator sh -lc 'curl -fsS http://127.0.0.1:${READINESS_POR
 
 ## Endpoints
 
+These endpoints exist only when **`AUTO_UPDATE` is enabled** (`1` / `true` / `yes`); otherwise the readiness HTTP server is not started.
+
 - `GET /ready_to_update`: **200** when the validator is outside the critical epoch window (`process_epoch`, `set_weights`, payouts under `lifecycle.epoch_busy_scope`). **423** while that work runs — `scripts/pre-update.sh` exits **75** so Watchtower skips this rollout attempt.
-- `GET /healthz`: **200** when the readiness HTTP server responds (used by the image `HEALTHCHECK`).
+- `GET /healthz`: **200** when the readiness HTTP server responds (used by the image `HEALTHCHECK` when configured).
 
 ## Safe point and signals
 

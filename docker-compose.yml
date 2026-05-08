@@ -1,5 +1,9 @@
 # NOVA validator + Watchtower rolling updates from Docker Hub.
 # Prerequisites: README-DEPLOY.md (``.env``, ``${WALLET_BIND}``, NVIDIA toolkit on Linux).
+#
+# Recommended deployment: both ``validator`` and ``watchtower`` are always on. The validator
+# always serves readiness HTTP (``/ready_to_update``, ``/healthz``); Watchtower lifecycle
+# hooks depend on it. Do not run ``validator`` alone if you expect safe auto-updates.
 services:
   validator:
     build:
@@ -29,13 +33,18 @@ services:
               capabilities: [gpu]
 
   watchtower:
-    image: containrrr/watchtower:latest
-    container_name: nova-watchtower
+    image: nickfedor/watchtower:latest
+    container_name: watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - --label-enable
+      - --enable-lifecycle-hooks
+      - --cleanup
+      - --interval
+      - "300"
+      - --notifications
+      - shoutrrr
     environment:
-      WATCHTOWER_LIFECYCLE_HOOKS: "true"
-      WATCHTOWER_LABEL_ENABLE: "true"
-      WATCHTOWER_POLL_INTERVAL: "300"
-      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_NOTIFICATION_URL: ${WATCHTOWER_NOTIFICATION_URL}

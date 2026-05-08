@@ -84,8 +84,6 @@ class _LifecycleHandler(BaseHTTPRequestHandler):
 
 def install_async_signal_handlers() -> None:
     """SIGINT/SIGTERM toggle drain flag. Calls must run inside a running asyncio loop (Unix).
-
-    Ignored on Windows where ``add_signal_handler`` is unsupported.
     """
     if sys.platform == "win32":
         return

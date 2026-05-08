@@ -32,8 +32,16 @@ def test_validator_watchtower_placement_and_signals(compose_document):
 
 def test_watchtower_lifecycle_hooks(compose_document):
     wt = compose_document["services"]["watchtower"]
+    assert wt.get("image") == "nickfedor/watchtower:latest"
+    cmd = wt.get("command") or []
+    assert "--label-enable" in cmd
+    assert "--enable-lifecycle-hooks" in cmd
+    assert "--cleanup" in cmd
+    assert "--interval" in cmd
+    assert "300" in cmd
+    assert "--notifications" in cmd
+    assert "shoutrrr" in cmd
     env = wt.get("environment") or {}
-    assert env.get("WATCHTOWER_LIFECYCLE_HOOKS") == "true"
-    assert env.get("WATCHTOWER_LABEL_ENABLE") == "true"
+    assert "WATCHTOWER_NOTIFICATION_URL" in env
     volumes = wt.get("volumes") or []
     assert any("docker.sock" in str(v) for v in volumes)
