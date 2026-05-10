@@ -56,6 +56,7 @@ nanobody_requirements:
   min_human_framework_score: 0.75
   max_similarity_score: 0.95 # maximum similarity score to top sequences for that target (calculated by metanano.search.search_engine)
   num_top_sequences: 50 # number of top sequences to consider for similarity check
+  enforce_vhh_hallmarks: true # enforce VHH FR2 region hallmark residues (F/Y at pos 42, E/Q at pos 49, R at pos 50; VHH-like sequences are allowed with a penalty)
 
 boltzgen_config:
   boltzgen_rank_mode: min # "max" or "min"

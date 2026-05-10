@@ -12,6 +12,7 @@ from utils import (
     compute_igblast_nativeness,
     index_top_sequences,
     is_duplicate,
+    classify_vhh_vh,
     NOVA_DIR,
 )
 
@@ -178,6 +179,12 @@ async def validate_nanobodies(
 
         bt.logging.debug(f"UID {uid}: nativeness/humanness results: {nativeness_result}")
 
+        domain_type = [classify_vhh_vh(r.features["fr2_pos49"], r.features["fr2_pos50"]) for r in nativeness_result]
+        if config["enforce_vhh_hallmarks"] and any(d == "VH" for d in domain_type):
+            vh = [seq for seq, d in zip(info["sequences"], domain_type) if d == "VH"]
+            bt.logging.warning(f"UID {uid}: contains sequences that are not VHH: {vh}")
+            continue
+
         if any(r.vhh_nativeness < config["min_nativeness_score"] for r in nativeness_result):
             low = [seq for seq, r in zip(info["sequences"], nativeness_result) if r.vhh_nativeness < config["min_nativeness_score"]]
             bt.logging.warning(f"UID {uid}: contains sequences that are low in nativeness score: {low}")
@@ -186,7 +193,6 @@ async def validate_nanobodies(
             low = [seq for seq, r in zip(info["sequences"], nativeness_result) if r.human_framework < config["min_human_framework_score"]]
             bt.logging.warning(f"UID {uid}: contains sequences that are low in human framework score: {low}")
             continue
-
         post_nativeness[uid] = {
             **info,
             "nativeness_result": nativeness_result,
