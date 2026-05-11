@@ -1,7 +1,7 @@
 # Number of targets and antitargets to select
 protein_selection:
   small_molecule:
-    target: "B1WC68" # if multiple targets, they should be comma separated
+    target: "Q6P6W3" # if multiple targets, they should be comma separated
     clip_interval: [null] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
   nanobody:
     target: "Q9NZQ7" # if multiple targets, they should be comma separated
@@ -56,6 +56,7 @@ nanobody_requirements:
   min_human_framework_score: 0.75
   max_similarity_score: 0.95 # maximum similarity score to top sequences for that target (calculated by metanano.search.search_engine)
   num_top_sequences: 50 # number of top sequences to consider for similarity check
+  enforce_vhh_hallmarks: true # enforce VHH FR2 region hallmark residues (E/Q at pos 49, R at pos 50)
 
 boltzgen_config:
   boltzgen_rank_mode: min # "max" or "min"

@@ -224,3 +224,8 @@ def is_duplicate(match):
         return True, f"whole-sequence identity {identity:.0%} (no CDR data)"
 
     return False, "novel"
+
+def classify_vhh_vh(fr2_pos49, fr2_pos50):
+    if fr2_pos49 in "EQ" and fr2_pos50 == "R":
+        return "VHH"
+    return "VH"

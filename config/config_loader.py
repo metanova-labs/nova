@@ -41,7 +41,6 @@ def load_config(path: str = "config/config.yaml"):
     boltzgen_rank_mode = boltzgen_config["boltzgen_rank_mode"]
     boltzgen_rank_by = boltzgen_config["boltzgen_rank_by"]
 
-
     nanobody_config = config["nanobody_requirements"]
     num_sequences = nanobody_config["num_sequences"]
     min_sequence_length = nanobody_config["min_sequence_length"]
@@ -59,6 +58,7 @@ def load_config(path: str = "config/config.yaml"):
     min_human_framework_score = nanobody_config["min_human_framework_score"]
     max_similarity_score = nanobody_config["max_similarity_score"]
     num_top_sequences = nanobody_config["num_top_sequences"]
+    enforce_vhh_hallmarks = nanobody_config["enforce_vhh_hallmarks"]
 
     # Load reaction filtering configuration
     reaction_config = config["reaction_filtering"]
@@ -101,6 +101,7 @@ def load_config(path: str = "config/config.yaml"):
         'min_human_framework_score': min_human_framework_score,
         'max_similarity_score': max_similarity_score,
         'num_top_sequences': num_top_sequences,
+        'enforce_vhh_hallmarks': enforce_vhh_hallmarks,
         'boltzgen_rank_mode': boltzgen_rank_mode,
         'boltzgen_rank_by': boltzgen_rank_by,
     }

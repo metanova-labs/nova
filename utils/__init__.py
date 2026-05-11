@@ -20,7 +20,8 @@ from .nanobodies import (
     analyze_developability, 
     compute_igblast_nativeness,
     index_top_sequences,
-    is_duplicate
+    is_duplicate,
+    classify_vhh_vh
 )
 from .btdr import QuicknetBittensorDrandTimelock
 from .constants import NOVA_DIR, ALLOWED_AAS, HYDROPHOBIC, CAMELID_DB_V, HUMAN_DB_V
