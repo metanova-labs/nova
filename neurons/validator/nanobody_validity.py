@@ -179,7 +179,7 @@ async def validate_nanobodies(
 
         bt.logging.debug(f"UID {uid}: nativeness/humanness results: {nativeness_result}")
 
-        domain_type = [classify_vhh_vh(r.features["fr2_pos49"], r.features["fr2_pos50"]) for r in nativeness_result]
+        domain_type = [classify_vhh_vh(r.features.get("fr2_pos49", "X"), r.features.get("fr2_pos50", "X")) for r in nativeness_result]
         if config["enforce_vhh_hallmarks"] and any(d == "VH" for d in domain_type):
             vh = [seq for seq, d in zip(info["sequences"], domain_type) if d == "VH"]
             bt.logging.warning(f"UID {uid}: contains sequences that are not VHH: {vh}")
