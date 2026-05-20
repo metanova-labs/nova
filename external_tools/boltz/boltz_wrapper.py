@@ -9,6 +9,8 @@ import hashlib
 import math
 import shutil
 import glob
+import tempfile
+from typing import Optional
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -23,11 +25,28 @@ sys.path.append(NOVA_DIR)
 import bittensor as bt
 
 from boltz.main import predict
-from utils.proteins import get_sequence_from_protein_code
-from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles, get_heavy_atom_count
+
+# Direct imports to avoid utils/__init__.py (which requires metanano)
+import importlib.util
+_spec = importlib.util.spec_from_file_location("proteins", os.path.join(NOVA_DIR, "utils", "proteins.py"))
+_proteins = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_proteins)
+get_sequence_from_protein_code = _proteins.get_sequence_from_protein_code
+
+_spec2 = importlib.util.spec_from_file_location("molecules", os.path.join(NOVA_DIR, "utils", "molecules.py"))
+_molecules = importlib.util.module_from_spec(_spec2)
+_spec2.loader.exec_module(_molecules)
+compute_maccs_entropy = _molecules.compute_maccs_entropy
+is_boltz_safe_smiles = _molecules.is_boltz_safe_smiles
+get_heavy_atom_count = _molecules.get_heavy_atom_count
 
 def _get_record_id(rec_id, base_seed):
     h = hashlib.sha256(str(rec_id).encode()).digest()
+    return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
+
+def _get_molecule_seed(mol_idx, base_seed):
+    """Generate deterministic per-molecule seed."""
+    h = hashlib.sha256(str(mol_idx).encode()).digest()
     return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
 
 class BoltzWrapper:
@@ -107,7 +126,35 @@ properties:
 
         bt.logging.info(f"Preprocessing data for Boltz2 complete")
 
+    def _get_predict_kwargs(self, seed: Optional[int] = None, override: bool = True) -> dict:
+        """Build common kwargs for predict() call.
+        
+        Args:
+            seed: Random seed. Uses base_seed if None.
+            override: Whether to override existing outputs.
+            
+        Returns:
+            Dict of kwargs for boltz.main.predict().
+        """
+        return {
+            'recycling_steps': self.config['recycling_steps'],
+            'sampling_steps': self.config['sampling_steps'],
+            'diffusion_samples': self.config['diffusion_samples'],
+            'sampling_steps_affinity': self.config['sampling_steps_affinity'],
+            'diffusion_samples_affinity': self.config['diffusion_samples_affinity'],
+            'output_format': self.config['output_format'],
+            'seed': seed if seed is not None else self.base_seed,
+            'affinity_mw_correction': self.config['affinity_mw_correction'],
+            'override': override,
+            'num_workers': 0,
+        }
+
     def score_molecules(self, valid_molecules_by_uid: dict, score_dict: dict, subnet_config: dict) -> None:
+        """Run Boltz2 predictions for all molecules in batch mode.
+        
+        Note: This is the original batch prediction method. For deterministic
+        per-molecule scoring, use predict_single_molecule() or stable_inference.
+        """
         self.subnet_config = subnet_config
 
         self._preprocess_data_for_boltz(valid_molecules_by_uid, score_dict)
@@ -115,19 +162,11 @@ properties:
         # Run Boltz2 for unique molecules
         bt.logging.info("Running Boltz2")
         try:
+            predict_kwargs = self._get_predict_kwargs()
             predict(
                 data = self.input_dir,
                 out_dir = self.output_dir,
-                recycling_steps = self.config['recycling_steps'],
-                sampling_steps = self.config['sampling_steps'],
-                diffusion_samples = self.config['diffusion_samples'],
-                sampling_steps_affinity = self.config['sampling_steps_affinity'],
-                diffusion_samples_affinity = self.config['diffusion_samples_affinity'],
-                output_format = self.config['output_format'],
-                seed = self.base_seed,  
-                affinity_mw_correction = self.config['affinity_mw_correction'],
-                override = self.config['override'],
-                num_workers = 0,
+                **predict_kwargs,
             )
             bt.logging.info(f"Boltz2 predictions complete")
 
@@ -206,6 +245,53 @@ properties:
                 except (json.JSONDecodeError, IOError) as e:
                     bt.logging.error(f"Failed to load {file_path}: {e}")
         return combined_data
+
+    def predict_single_molecule(self, smiles: str, target: str, protein_sequence: str, mol_seed: int) -> dict:
+        """Predict a single molecule in complete isolation.
+        
+        Creates temporary input/output directories, runs predict() with a single
+        molecule, extracts scores, and cleans up. This ensures no cross-molecule
+        interference.
+        
+        Returns:
+            dict with affinity metrics, or empty dict on failure.
+        """
+        mol_idx = _get_record_id(smiles, self.base_seed)
+        
+        # Create temporary isolated directories
+        tmp_dir = tempfile.mkdtemp(prefix=f"boltz_single_{mol_idx}_")
+        input_dir = os.path.join(tmp_dir, "inputs")
+        output_dir = os.path.join(tmp_dir, "outputs")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        try:
+            # Write single-molecule YAML
+            yaml_content = self._create_yaml_content(target, protein_sequence, smiles)
+            yaml_path = os.path.join(input_dir, f"{mol_idx}_{target}.yaml")
+            with open(yaml_path, "w") as f:
+                f.write(yaml_content)
+            
+            # Run prediction with per-molecule seed
+            predict_kwargs = self._get_predict_kwargs(seed=mol_seed, override=True)
+            predict(
+                data=input_dir,
+                out_dir=output_dir,
+                devices=1,
+                **predict_kwargs,
+            )
+            
+            # Extract scores
+            results_path = os.path.join(output_dir, 'boltz_results_inputs', 'predictions', f'{mol_idx}_{target}')
+            scores = self._load_prediction_files(results_path)
+            return scores
+            
+        except Exception as e:
+            bt.logging.error(f"Error predicting single molecule {smiles}: {e}")
+            return {}
+        finally:
+            # Clean up temporary directories
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def _cleanup_files(self) -> None:
         try:

@@ -18,6 +18,8 @@ from auto_updater import AutoUpdater
 from config.config_loader import load_config
 
 from utils import get_challenge_params_from_blockhash, inference, QuicknetBittensorDrandTimelock
+from utils.stable_inference import get_stable_scores
+from external_tools.boltz.boltz_wrapper import _get_record_id
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
@@ -139,13 +141,17 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             config=config,
         )
 
-        result = inference.main(valid_molecules_by_uid, valid_nanobodies_by_uid, score_dict, config)
-        boltz = result.boltz
-        boltzgen = result.boltzgen
+        # Run molecule inference with spawn process isolation
+        boltz = await _run_molecule_inference(
+            valid_molecules_by_uid=valid_molecules_by_uid,
+            score_dict=score_dict,
+            small_molecule_target=small_molecule_target,
+            config=config,
+        )
 
-        # update score_dict for molecules 
-        # (before external score sharing because averaging final scores and components is equivalent)
-        # nanobody final scores are calculated after score sharing
+        # Run nanobody inference
+        boltzgen = inference.run_nanobody_inference(valid_nanobodies_by_uid, config)
+
         score_dict = calculate_scores_for_type(
             score_dict=score_dict,
             valid_items_by_uid=valid_molecules_by_uid,
@@ -153,7 +159,6 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
             config=config
         )
 
-        test_mode = bool(getattr(config, 'test_mode', False))
         external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
         external_api_key = os.environ.get('VALIDATOR_API_KEY')
         if external_api_url and not test_mode:
@@ -172,7 +177,6 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 target_proteins=small_molecule_target,
             )
             
-        # update scores for nanobodies
         if valid_nanobodies_by_uid and boltzgen and boltzgen.per_nanobody_components:
             rank_mode = getattr(config, "boltzgen_rank_mode", None) or getattr(config, "rank_mode", "min")
             final_boltzgen_scores, per_nanobody_components = BoltzgenWrapper.finalize_from_shared_components(
@@ -180,7 +184,6 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                 valid_nanobodies_by_uid,
                 config,
             )
-            bt.logging.debug(f"Final boltzgen scores: {per_nanobody_components}")
             inference._merge_boltzgen_into_score_dict(
                 score_dict,
                 final_boltzgen_scores,
@@ -232,29 +235,26 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
                     score_dict=score_dict,
                     nanobody_ranks=nanobody_ranks,
                 )
-                # only our validator creates protein viz files
                 try:
                     mmcif_dir = os.path.join(BASE_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files", "outputs", "intermediate_designs", "refold_cif")
-                    for mmcif_file in os.listdir(mmcif_dir):
-                        if mmcif_file.endswith(".cif"):
-                            mmcif_path = Path(os.path.join(mmcif_dir, mmcif_file))
-                            run_protein_viz(mmcif_path=mmcif_path, 
-                            chain_a="A", chain_b="B", output_path=Path(os.path.join(mmcif_dir, f"{mmcif_file.replace('.cif', '.html')}")), 
-                            upload=True, epoch=current_epoch)
+                    if os.path.exists(mmcif_dir):
+                        for mmcif_file in os.listdir(mmcif_dir):
+                            if mmcif_file.endswith(".cif"):
+                                mmcif_path = Path(os.path.join(mmcif_dir, mmcif_file))
+                                run_protein_viz(mmcif_path=mmcif_path, 
+                                chain_a="A", chain_b="B", output_path=Path(os.path.join(mmcif_dir, f"{mmcif_file.replace('.cif', '.html')}")), 
+                                upload=True, epoch=current_epoch)
                 except Exception as e:
                     bt.logging.error(f"Error running protein viz: {e}")
 
         except Exception as e:
             bt.logging.error(f"Failed to submit results to dashboard API: {e}")
-            bt.logging.error(traceback.format_exc())            
 
         for model in ["boltz", "boltzgen"]:
             tmp_files_dir = os.path.join(BASE_DIR, "external_tools", model, f"{model}_tmp_files")
             if os.path.exists(tmp_files_dir):
                 try:
                     shutil.rmtree(tmp_files_dir)
-                except FileNotFoundError:
-                    pass
                 except Exception as e:
                     bt.logging.error(f"Error cleaning up temporary files for {model}: {e}")
 
@@ -265,21 +265,93 @@ async def process_epoch(config, current_block, metagraph, subtensor, wallet):
         bt.logging.error(traceback.format_exc())
         return None
 
+async def _run_molecule_inference(
+    valid_molecules_by_uid: dict,
+    score_dict: dict,
+    small_molecule_target: list,
+    config,
+):
+    """Run deterministic, isolated inference for all molecules.
+    
+    Uses spawn process isolation to ensure each molecule gets a consistent
+    score independent of other molecules in the batch.
+    
+    Returns:
+        BoltzResult with per_molecule_components and unique_molecules.
+    """
+    from utils.inference import BoltzResult
+    
+    if not valid_molecules_by_uid:
+        return BoltzResult()
+
+    bt.logging.info("Starting isolated molecule inference...")
+    loop = asyncio.get_event_loop()
+    from utils.proteins import get_sequence_from_protein_code
+
+    per_molecule_components = {}
+    unique_molecules = {}
+
+    for target_idx, target in enumerate(small_molecule_target):
+        all_smiles = []
+        tracking_map = []
+
+        for uid, mol_data in valid_molecules_by_uid.items():
+            for smiles in mol_data.get('smiles', []):
+                all_smiles.append(smiles)
+                tracking_map.append((uid, smiles))
+                if smiles not in unique_molecules:
+                    unique_molecules[smiles] = []
+                mol_idx = _get_record_id(smiles, getattr(config, 'boltz_seed', 68) or 68)
+                unique_molecules[smiles].append((uid, mol_idx))
+
+        if not all_smiles:
+            continue
+
+        clip_interval = (
+            config.small_molecule_target_clip_interval[target_idx]
+            if hasattr(config, 'small_molecule_target_clip_interval')
+            else None
+        )
+        protein_sequence = get_sequence_from_protein_code(target, clip_interval)
+
+        base_seed = getattr(config, 'boltz_seed', 68) or 68
+        gpu_ids = getattr(config, 'inference_gpu_ids', 'all') or 'all'
+        stable_scores, components = await loop.run_in_executor(
+            None, get_stable_scores, all_smiles, target, protein_sequence, base_seed, gpu_ids
+        )
+
+        # Write scores to score_dict
+        uid_scores = {}
+        for uid, smiles in tracking_map:
+            uid_scores.setdefault(uid, [])
+            score = stable_scores.get(smiles)
+            if score is None:
+                score = float('inf') if config.boltz_mode == "min" else float('-inf')
+            uid_scores[uid].append(score)
+
+        for uid, scores in uid_scores.items():
+            score_dict[uid]["molecule_scores"][target_idx] = scores
+
+        # Merge per-molecule components
+        for smiles, target_metrics in components.items():
+            for uid, _ in unique_molecules.get(smiles, []):
+                if uid not in per_molecule_components:
+                    per_molecule_components[uid] = {}
+                if smiles not in per_molecule_components[uid]:
+                    per_molecule_components[uid][smiles] = {}
+                per_molecule_components[uid][smiles].update(target_metrics)
+
+    return BoltzResult(per_molecule_components, unique_molecules)
+
+
 async def main(config):
-    """
-    Main validator loop
-    """
     test_mode = bool(getattr(config, 'test_mode', False))
     local_input = bool(getattr(config, 'local_input_file', None))
     
-    # Initialize subtensor client
     subtensor = await connect_subtensor(config.network)
     
-    # Wallet + registration check (skipped in test mode)
     wallet = None
-    if test_mode:
-        bt.logging.info("TEST MODE: running without setting weights")
-    else:
+    if not test_mode:
         try:
             wallet = bt.wallet(config=config)
             await check_registration(wallet, subtensor, config.netuid)
@@ -289,15 +361,10 @@ async def main(config):
 
     setup_github_auth(GITHUB_HEADERS)
 
-    # Auto-updater setup
     if os.environ.get('AUTO_UPDATE') == '1':
         updater = AutoUpdater(logger=bt.logging)
         asyncio.create_task(updater.start_update_loop())
-        bt.logging.info(f"Auto-updater enabled, checking for updates every {updater.UPDATE_INTERVAL} seconds")
-    else:
-        bt.logging.info("Auto-updater disabled. Set AUTO_UPDATE=1 to enable.")
 
-    # Main validator loop
     last_logged_blocks_remaining = None
     while True:
         try:
@@ -312,61 +379,47 @@ async def main(config):
                 lambda st: st.get_current_block(),
             )
 
-            # Only wait for epoch boundary if not reading from local input
-            if local_input or current_block % config.epoch_length == 0:
-                # Epoch end - process and set weights
+            if test_mode:
+                current_block = (current_block // config.epoch_length) * config.epoch_length
+            
+            if local_input or test_mode or current_block % config.epoch_length == 0:
                 config.update(load_config())
                 epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
-                winner_molecules = None
-                winner_nanobodies = None
-                if epoch_result is None:
-                    pass
-                else:
+                
+                if epoch_result:
                     winner_molecules, winner_nanobodies, uid_to_data = epoch_result
+                    current_epoch = (current_block // config.epoch_length) - 1
+                    if not test_mode:
+                        payouts = await set_weights(winner_molecules, winner_nanobodies, config)
+                        if payouts:
+                            try:
+                                hotkey_payouts = []
+                                for component, uid, proportion in payouts:
+                                    hotkey = uid_to_data.get(uid, {}).get("hotkey")
+                                    if hotkey:
+                                        hotkey_payouts.append((component, hotkey, proportion))
 
-                current_epoch = (current_block // config.epoch_length) - 1
-                if not test_mode:
-                    payouts = await set_weights(winner_molecules, winner_nanobodies, config)
-                    if payouts:
-                        try:
-                            hotkey_payouts = []
-                            for component, uid, proportion in payouts:
-                                hotkey = uid_to_data.get(uid, {}).get("hotkey")
-                                if not hotkey:
-                                    bt.logging.error(
-                                        f"Missing hotkey for payout component={component} uid={uid}; skipping."
-                                    )
-                                    continue
-                                hotkey_payouts.append((component, hotkey, proportion))
+                                await dispatch_bounty_payouts(
+                                    payouts=hotkey_payouts,
+                                    subtensor=subtensor,
+                                    config=config,
+                                    epoch=current_epoch,
+                                )
+                            except Exception as e:
+                                bt.logging.error(f"Error dispatching bounty payouts: {e}")
 
-                            await dispatch_bounty_payouts(
-                                payouts=hotkey_payouts,
-                                subtensor=subtensor,
-                                config=config,
-                                epoch=current_epoch,
-                            )
-                        except Exception as e:
-                            bt.logging.error(f"Error dispatching bounty payouts: {e}")
-                            bt.logging.error(traceback.format_exc())
-                
-                # If using local input, exit after processing
-                if local_input:
+                if local_input or test_mode:
                     break
-                
             else:
-                # Waiting for epoch
                 blocks_remaining = config.epoch_length - (current_block % config.epoch_length)
                 if (blocks_remaining % 5 == 0) and (blocks_remaining != last_logged_blocks_remaining):
                     bt.logging.info(f"Waiting for epoch to end... {blocks_remaining} blocks remaining.")
                     last_logged_blocks_remaining = blocks_remaining
                 await asyncio.sleep(1)
-                
  
         except asyncio.CancelledError:
-            bt.logging.info("Resetting subtensor connection.")
             subtensor = await reconnect_subtensor(subtensor, config.network)
             await asyncio.sleep(1)
-            continue
         except Exception as e:
             bt.logging.error(f"Error in main loop: {e}")
             subtensor = await reconnect_subtensor(subtensor, config.network)
