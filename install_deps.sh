@@ -25,7 +25,7 @@ fi
 
 # Install uv:
 wget -qO- https://astral.sh/uv/install.sh | sh
-#source $HOME/.local/bin/env
+source $HOME/.local/bin/env
 
 # Install Rust (cargo) with auto-confirmation:
 wget -qO- https://sh.rustup.rs | sh -s -- -y
