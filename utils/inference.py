@@ -44,8 +44,9 @@ class InferenceResult(NamedTuple):
     boltzgen: BoltzgenResult | None
 
 
-def infer_worker(gpu_id: int, payload: dict, inference_type: str) -> dict:
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+def infer_worker(boltzgen_gpu_id: int | None, payload: dict, inference_type: str) -> dict:
+    if inference_type == "boltzgen" and boltzgen_gpu_id is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(boltzgen_gpu_id)
 
     if inference_type == "boltz":
         from external_tools.boltz.boltz_wrapper import BoltzWrapper
@@ -56,7 +57,7 @@ def infer_worker(gpu_id: int, payload: dict, inference_type: str) -> dict:
             for uid in payload["score_dict"]
         }
         return {
-            "gpu": gpu_id,
+            "gpu": boltzgen_gpu_id,
             "ok": True,
             "boltz": score_dict_updates,
             "per_molecule_components": getattr(boltz, "per_molecule_components", {}),
@@ -70,12 +71,12 @@ def infer_worker(gpu_id: int, payload: dict, inference_type: str) -> dict:
             payload["nanobodies"], payload["config"]
         )
         return {
-            "gpu": gpu_id,
+            "gpu": boltzgen_gpu_id,
             "ok": True,
             "per_nanobody_components": per_nanobody_components,
         }
     else:
-        return {"gpu": gpu_id, "ok": False, "error": f"unknown inference_type={inference_type}"}
+        return {"gpu": boltzgen_gpu_id, "ok": False, "error": f"unknown inference_type={inference_type}"}
 
 
 def _merge_boltz_into_score_dict(score_dict: dict, boltz_result: dict) -> None:
@@ -120,7 +121,11 @@ def _merge_boltzgen_into_score_dict(
 
 def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict: dict, config) -> InferenceResult:
     """
-    Run Boltz and/or Boltzgen inference, each on its own GPU when available.
+    Run Boltz and/or Boltzgen inference sequentially.
+
+    Boltz runs first (using all GPUs via internal spawn isolation), then
+    boltzgen runs on GPU 0. This avoids GPU contention and nested
+    multiprocessing while maximizing boltz throughput.
 
     Updates ``score_dict['molecule_scores']`` in-place. Nanobody inference fills
     ``per_nanobody_components`` only; ranked ``nanobody_scores`` are applied later
@@ -140,30 +145,19 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
     per_nanobody_components = None
     per_molecule_components = None
     unique_molecules = None
-    ctx = mp.get_context("spawn")
 
-    if num_gpus >= 2 and run_boltz and run_boltzgen:
-        with ctx.Pool(processes=2) as pool:
-            r_boltz = pool.apply_async(infer_worker, (0, payload_boltz, "boltz"))
-            r_boltzgen = pool.apply_async(infer_worker, (1, payload_boltzgen, "boltzgen"))
-            out_boltz = r_boltz.get()
-            out_boltzgen = r_boltzgen.get()
-        _merge_boltz_into_score_dict(score_dict, out_boltz)
-        per_molecule_components = out_boltz.get("per_molecule_components") or {}
-        unique_molecules = out_boltz.get("unique_molecules") or {}
-        if out_boltzgen.get("ok"):
-            per_nanobody_components = out_boltzgen.get("per_nanobody_components")
-    else:
-        with ctx.Pool(processes=1) as pool:
-            if run_boltz:
-                out = pool.apply_async(infer_worker, (0, payload_boltz, "boltz")).get()
-                _merge_boltz_into_score_dict(score_dict, out)
-                per_molecule_components = out.get("per_molecule_components") or {}
-                unique_molecules = out.get("unique_molecules") or {}
-            if run_boltzgen:
-                out = pool.apply_async(infer_worker, (0, payload_boltzgen, "boltzgen")).get()
-                if out.get("ok"):
-                    per_nanobody_components = out.get("per_nanobody_components")
+    # Run directly in main process to avoid nested multiprocessing.
+    # Boltz spawn isolation happens inside score_molecules() via _spawn_predict_worker.
+    if run_boltz:
+        out = infer_worker(None, payload_boltz, "boltz")
+        _merge_boltz_into_score_dict(score_dict, out)
+        per_molecule_components = out.get("per_molecule_components") or {}
+        unique_molecules = out.get("unique_molecules") or {}
+
+    if run_boltzgen:
+        out = infer_worker(0, payload_boltzgen, "boltzgen")
+        if out.get("ok"):
+            per_nanobody_components = out.get("per_nanobody_components")
 
     boltz = BoltzResult(per_molecule_components, unique_molecules) if run_boltz else None
     boltzgen = BoltzgenResult(per_nanobody_components or {}, None) if run_boltzgen else None

@@ -270,14 +270,15 @@ async def main(config):
     Main validator loop
     """
     test_mode = bool(getattr(config, 'test_mode', False))
+    immediate_mode = bool(getattr(config, 'immediate_mode', False))
     local_input = bool(getattr(config, 'local_input_file', None))
     
     # Initialize subtensor client
     subtensor = await connect_subtensor(config.network)
     
-    # Wallet + registration check (skipped in test mode)
+    # Wallet + registration check (skipped in test mode or immediate mode)
     wallet = None
-    if test_mode:
+    if test_mode or immediate_mode:
         bt.logging.info("TEST MODE: running without setting weights")
     else:
         try:
@@ -312,6 +313,11 @@ async def main(config):
                 lambda st: st.get_current_block(),
             )
 
+            # In immediate_mode, align to previous epoch boundary and score once
+            if immediate_mode:
+                current_block = (current_block // config.epoch_length) * config.epoch_length
+                bt.logging.info(f"IMMEDIATE_MODE: scoring epoch ending at block {current_block}")
+
             # Only wait for epoch boundary if not reading from local input
             if local_input or current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
@@ -325,7 +331,7 @@ async def main(config):
                     winner_molecules, winner_nanobodies, uid_to_data = epoch_result
 
                 current_epoch = (current_block // config.epoch_length) - 1
-                if not test_mode:
+                if not test_mode and not immediate_mode:
                     payouts = await set_weights(winner_molecules, winner_nanobodies, config)
                     if payouts:
                         try:
@@ -349,8 +355,8 @@ async def main(config):
                             bt.logging.error(f"Error dispatching bounty payouts: {e}")
                             bt.logging.error(traceback.format_exc())
                 
-                # If using local input, exit after processing
-                if local_input:
+                # Exit after one epoch in immediate_mode or local input mode
+                if immediate_mode or local_input:
                     break
                 
             else:

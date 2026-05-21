@@ -5,3 +5,9 @@ venv/
 *.log
 *.log.*
 combinatorial_db/molecules.sqlite
+
+# Temporary runtime directories
+external_tools/boltz/boltz_tmp_files/
+external_tools/boltzgen/boltzgen_tmp_files/
+external_tools/igblast/
+

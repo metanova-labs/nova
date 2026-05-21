@@ -214,11 +214,11 @@ properties:
         # Defer cleanup tp preserve unique_molecules for result submission
 
     def _run_isolated_predictions(self) -> None:
-        """Run each molecule-target pair in isolation.
+        """Run each molecule-target pair in a separate spawn process.
 
-        If already inside a spawn worker (e.g. inference.infer_worker), run
-        sequentially in the current process. Otherwise spawn separate processes
-        for full CUDA isolation.
+        Uses all available GPUs, distributing tasks round-robin.
+        Processes are launched in batches of len(gpu_ids) to avoid
+        concurrent GPU memory contention.
         """
         import torch
 
@@ -240,82 +240,61 @@ properties:
         if not tasks:
             return
 
-        # Detect if we are already inside a spawn worker (e.g. inference.infer_worker)
-        # In that case, avoid nested multiprocessing and run sequentially.
-        parent_process = mp.parent_process()
-        if parent_process is not None:
-            bt.logging.info(
-                f"Running {len(tasks)} predictions sequentially inside spawn worker "
-                f"(GPU {gpu_ids[0]}, avoid nested multiprocessing)"
-            )
-            self._isolated_results = {}
-            for smiles, target, protein_sequence, mol_idx in tasks:
-                result_queue = mp.Queue()
-                _spawn_predict_worker(
-                    smiles,
-                    target,
-                    protein_sequence,
-                    mol_idx,
-                    self.base_seed,
-                    self.config,
-                    result_queue,
-                    gpu_ids[0],
+        # Number of concurrent processes per GPU (tune based on GPU memory)
+        _PROCESSES_PER_GPU = 2
+
+        bt.logging.info(f"Spawning {len(tasks)} isolated predictions across {len(gpu_ids)} GPU(s), "
+                       f"{_PROCESSES_PER_GPU} process(es) per GPU concurrently")
+        ctx = mp.get_context("spawn")
+        self._isolated_results = {}
+        errors = []
+
+        # Process in batches to avoid concurrent GPU memory contention
+        batch_size = len(gpu_ids) * _PROCESSES_PER_GPU
+        for batch_start in range(0, len(tasks), batch_size):
+            batch = tasks[batch_start:batch_start + batch_size]
+            result_queue = ctx.Queue()
+            processes = []
+
+            for i, (smiles, target, protein_sequence, mol_idx) in enumerate(batch):
+                gpu_id = gpu_ids[i % len(gpu_ids)]
+                p = ctx.Process(
+                    target=_spawn_predict_worker,
+                    args=(
+                        smiles,
+                        target,
+                        protein_sequence,
+                        mol_idx,
+                        self.base_seed,
+                        self.config,
+                        result_queue,
+                        gpu_id,
+                    ),
                 )
+                p.start()
+                processes.append(p)
+
+            # Collect results for this batch
+            for _ in range(len(processes)):
                 try:
                     status, payload = result_queue.get(timeout=_SPAWN_PREDICT_TIMEOUT)
                     if status == "ERROR":
-                        bt.logging.error(f"Prediction failed for {smiles}/{target}: {payload[2]}")
+                        smiles, target, error_msg = payload
+                        bt.logging.error(f"Prediction failed for {smiles}/{target}: {error_msg}")
+                        errors.append(payload)
                     else:
                         smiles, target, combined_data = payload
                         self._isolated_results.setdefault(smiles, {})[target] = combined_data
                 except Exception as exc:
                     bt.logging.error(f"Result queue error: {exc}")
-            return
+                    errors.append(str(exc))
 
-        bt.logging.info(f"Spawning {len(tasks)} isolated predictions across {len(gpu_ids)} GPU(s)")
-        ctx = mp.get_context("spawn")
-        result_queue = ctx.Queue()
-        processes = []
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+                p.join()
 
-        for i, (smiles, target, protein_sequence, mol_idx) in enumerate(tasks):
-            gpu_id = gpu_ids[i % len(gpu_ids)]
-            p = ctx.Process(
-                target=_spawn_predict_worker,
-                args=(
-                    smiles,
-                    target,
-                    protein_sequence,
-                    mol_idx,
-                    self.base_seed,
-                    self.config,
-                    result_queue,
-                    gpu_id,
-                ),
-            )
-            p.start()
-            processes.append(p)
-
-        # Collect results
-        self._isolated_results = {}
-        errors = []
-        for _ in range(len(processes)):
-            try:
-                status, payload = result_queue.get(timeout=_SPAWN_PREDICT_TIMEOUT)
-                if status == "ERROR":
-                    smiles, target, error_msg = payload
-                    bt.logging.error(f"Prediction failed for {smiles}/{target}: {error_msg}")
-                    errors.append(payload)
-                else:
-                    smiles, target, combined_data = payload
-                    self._isolated_results.setdefault(smiles, {})[target] = combined_data
-            except Exception as exc:
-                bt.logging.error(f"Result queue error: {exc}")
-                errors.append(str(exc))
-
-        for p in processes:
-            if p.is_alive():
-                p.terminate()
-            p.join()
+            bt.logging.info(f"Batch {batch_start // batch_size + 1}/{(len(tasks) + batch_size - 1) // batch_size} complete")
 
         if errors:
             bt.logging.warning(f"{len(errors)} prediction(s) failed out of {len(tasks)}")
