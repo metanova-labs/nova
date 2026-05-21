@@ -9,6 +9,8 @@ import hashlib
 import math
 import shutil
 import glob
+import tempfile
+import multiprocessing as mp
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -29,6 +31,91 @@ from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles, get_hea
 def _get_record_id(rec_id, base_seed):
     h = hashlib.sha256(str(rec_id).encode()).digest()
     return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
+
+
+# Timeout for each spawn-process prediction (seconds)
+_SPAWN_PREDICT_TIMEOUT = 3600
+
+
+def _spawn_predict_worker(
+    smiles: str,
+    target: str,
+    protein_sequence: str,
+    mol_idx: int,
+    base_seed: int,
+    config: dict,
+    result_queue: mp.Queue,
+    gpu_id: int,
+) -> None:
+    """Worker: predict a single molecule in complete isolation.
+
+    Must be a module-level function for spawn compatibility.
+    """
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    try:
+        tmp_dir = tempfile.mkdtemp(prefix=f"boltz_iso_{mol_idx}_")
+        input_dir = os.path.join(tmp_dir, "inputs")
+        output_dir = os.path.join(tmp_dir, "outputs")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        yaml_content = f"""version: 1
+sequences:
+  - protein:
+      id: A
+      sequence: {protein_sequence}
+      msa: {os.path.join(NOVA_DIR, 'data', 'msa_files', target + '.a3m')}
+  - ligand:
+      id: B
+      smiles: {smiles}
+properties:
+  - affinity:
+      binder: B
+"""
+        yaml_path = os.path.join(input_dir, f"{mol_idx}_{target}.yaml")
+        with open(yaml_path, "w") as f:
+            f.write(yaml_content)
+
+        predict(
+            data=input_dir,
+            out_dir=output_dir,
+            recycling_steps=config['recycling_steps'],
+            sampling_steps=config['sampling_steps'],
+            diffusion_samples=config['diffusion_samples'],
+            sampling_steps_affinity=config['sampling_steps_affinity'],
+            diffusion_samples_affinity=config['diffusion_samples_affinity'],
+            output_format=config['output_format'],
+            seed=mol_idx,
+            affinity_mw_correction=config['affinity_mw_correction'],
+            override=True,
+            num_workers=0,
+        )
+
+        results_path = os.path.join(
+            output_dir, 'boltz_results_inputs', 'predictions', f'{mol_idx}_{target}'
+        )
+        combined_data = {}
+        if os.path.exists(results_path):
+            for filepath in os.listdir(results_path):
+                file_path = os.path.join(results_path, filepath)
+                if filepath.startswith('affinity') or filepath.startswith('confidence'):
+                    try:
+                        with open(file_path, 'r') as f:
+                            data = json.load(f)
+                        combined_data.update(data)
+                    except (json.JSONDecodeError, IOError):
+                        pass
+
+        result_queue.put(("SUCCESS", (smiles, target, combined_data)))
+    except Exception as exc:
+        import traceback as _tb
+        result_queue.put(("ERROR", (smiles, target, f"{exc}\n{_tb.format_exc()}")))
+    finally:
+        if 'tmp_dir' in locals():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        result_queue.close()
+        result_queue.join_thread()
+
 
 class BoltzWrapper:
     def __init__(self):
@@ -112,25 +199,11 @@ properties:
 
         self._preprocess_data_for_boltz(valid_molecules_by_uid, score_dict)
 
-        # Run Boltz2 for unique molecules
-        bt.logging.info("Running Boltz2")
+        # Run Boltz2 for unique molecules with spawn-process isolation
+        bt.logging.info("Running Boltz2 with per-molecule spawn isolation")
         try:
-            predict(
-                data = self.input_dir,
-                out_dir = self.output_dir,
-                recycling_steps = self.config['recycling_steps'],
-                sampling_steps = self.config['sampling_steps'],
-                diffusion_samples = self.config['diffusion_samples'],
-                sampling_steps_affinity = self.config['sampling_steps_affinity'],
-                diffusion_samples_affinity = self.config['diffusion_samples_affinity'],
-                output_format = self.config['output_format'],
-                seed = self.base_seed,  
-                affinity_mw_correction = self.config['affinity_mw_correction'],
-                override = self.config['override'],
-                num_workers = 0,
-            )
+            self._run_isolated_predictions()
             bt.logging.info(f"Boltz2 predictions complete")
-
         except Exception as e:
             bt.logging.error(f"Error running Boltz2: {e}")
             bt.logging.error(traceback.format_exc())
@@ -139,6 +212,113 @@ properties:
         # Collect scores and distribute results to all UIDs
         self._postprocess_data(score_dict)
         # Defer cleanup tp preserve unique_molecules for result submission
+
+    def _run_isolated_predictions(self) -> None:
+        """Run each molecule-target pair in isolation.
+
+        If already inside a spawn worker (e.g. inference.infer_worker), run
+        sequentially in the current process. Otherwise spawn separate processes
+        for full CUDA isolation.
+        """
+        import torch
+
+        gpu_ids = list(range(torch.cuda.device_count())) or [0]
+        tasks = []
+        for smiles, id_list in self.unique_molecules.items():
+            mol_idx = id_list[0][1]
+            for target in self.subnet_config['small_molecule_target']:
+                clip_interval = (
+                    self.subnet_config['small_molecule_target_clip_interval'][
+                        self.subnet_config['small_molecule_target'].index(target)
+                    ]
+                    if 'small_molecule_target_clip_interval' in self.subnet_config
+                    else None
+                )
+                protein_sequence = get_sequence_from_protein_code(target, clip_interval)
+                tasks.append((smiles, target, protein_sequence, mol_idx))
+
+        if not tasks:
+            return
+
+        # Detect if we are already inside a spawn worker (e.g. inference.infer_worker)
+        # In that case, avoid nested multiprocessing and run sequentially.
+        parent_process = mp.parent_process()
+        if parent_process is not None:
+            bt.logging.info(
+                f"Running {len(tasks)} predictions sequentially inside spawn worker "
+                f"(GPU {gpu_ids[0]}, avoid nested multiprocessing)"
+            )
+            self._isolated_results = {}
+            for smiles, target, protein_sequence, mol_idx in tasks:
+                result_queue = mp.Queue()
+                _spawn_predict_worker(
+                    smiles,
+                    target,
+                    protein_sequence,
+                    mol_idx,
+                    self.base_seed,
+                    self.config,
+                    result_queue,
+                    gpu_ids[0],
+                )
+                try:
+                    status, payload = result_queue.get(timeout=_SPAWN_PREDICT_TIMEOUT)
+                    if status == "ERROR":
+                        bt.logging.error(f"Prediction failed for {smiles}/{target}: {payload[2]}")
+                    else:
+                        smiles, target, combined_data = payload
+                        self._isolated_results.setdefault(smiles, {})[target] = combined_data
+                except Exception as exc:
+                    bt.logging.error(f"Result queue error: {exc}")
+            return
+
+        bt.logging.info(f"Spawning {len(tasks)} isolated predictions across {len(gpu_ids)} GPU(s)")
+        ctx = mp.get_context("spawn")
+        result_queue = ctx.Queue()
+        processes = []
+
+        for i, (smiles, target, protein_sequence, mol_idx) in enumerate(tasks):
+            gpu_id = gpu_ids[i % len(gpu_ids)]
+            p = ctx.Process(
+                target=_spawn_predict_worker,
+                args=(
+                    smiles,
+                    target,
+                    protein_sequence,
+                    mol_idx,
+                    self.base_seed,
+                    self.config,
+                    result_queue,
+                    gpu_id,
+                ),
+            )
+            p.start()
+            processes.append(p)
+
+        # Collect results
+        self._isolated_results = {}
+        errors = []
+        for _ in range(len(processes)):
+            try:
+                status, payload = result_queue.get(timeout=_SPAWN_PREDICT_TIMEOUT)
+                if status == "ERROR":
+                    smiles, target, error_msg = payload
+                    bt.logging.error(f"Prediction failed for {smiles}/{target}: {error_msg}")
+                    errors.append(payload)
+                else:
+                    smiles, target, combined_data = payload
+                    self._isolated_results.setdefault(smiles, {})[target] = combined_data
+            except Exception as exc:
+                bt.logging.error(f"Result queue error: {exc}")
+                errors.append(str(exc))
+
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+            p.join()
+
+        if errors:
+            bt.logging.warning(f"{len(errors)} prediction(s) failed out of {len(tasks)}")
 
     def _postprocess_data(self, score_dict: dict) -> None:
         scores = self._collect_scores()
@@ -222,8 +402,12 @@ properties:
             if mol_idx not in scores:
                 scores[mol_idx] = {}
             for target in self.subnet_config['small_molecule_target']:
-                results_path = os.path.join(self.output_dir, 'boltz_results_inputs', 'predictions', f'{mol_idx}_{target}')
-                scores[mol_idx][target] = self._load_prediction_files(results_path)
+                # Use isolated prediction results if available, fallback to batch output
+                if hasattr(self, '_isolated_results') and smiles in self._isolated_results and target in self._isolated_results[smiles]:
+                    scores[mol_idx][target] = self._isolated_results[smiles][target]
+                else:
+                    results_path = os.path.join(self.output_dir, 'boltz_results_inputs', 'predictions', f'{mol_idx}_{target}')
+                    scores[mol_idx][target] = self._load_prediction_files(results_path)
 
         return scores
 
