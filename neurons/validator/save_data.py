@@ -124,7 +124,16 @@ def _build_molecule_details(
             comp = {"unknown": comp}
 
         if not comp or all(
-            all(v is None for v in metrics.values())
+            all(metrics.get(k) is None for k in (
+                "affinity_probability_binary", "affinity_pred_value",
+                "affinity_probability_binary1", "affinity_pred_value1",
+                "affinity_probability_binary2", "affinity_pred_value2",
+                "confidence_score", "ptm", "iptm",
+                "ligand_iptm", "protein_iptm",
+                "complex_plddt", "complex_iplddt",
+                "complex_pde", "complex_ipde",
+                "chains_ptm", "pair_chains_iptm",
+            ))
             for metrics in comp.values()
             if isinstance(metrics, dict)
         ):
