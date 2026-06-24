@@ -10,12 +10,6 @@ from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Literal, Optional
-from concurrent.futures import ThreadPoolExecutor
-import hashlib
-import random
-import numpy as np
-
-os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 import click
 import torch
@@ -26,6 +20,7 @@ from rdkit import Chem
 from tqdm import tqdm
 
 from boltz.data import const
+from boltz.data.module.inference import BoltzInferenceDataModule
 from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
 from boltz.data.mol import load_canonicals
 from boltz.data.msa.mmseqs2 import run_mmseqs2
@@ -35,12 +30,16 @@ from boltz.data.parse.fasta import parse_fasta
 from boltz.data.parse.yaml import parse_yaml
 from boltz.data.types import MSA, Manifest, Record
 from boltz.data.write.writer import BoltzAffinityWriter, BoltzWriter
+from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
-
-import bittensor as bt
 
 CCD_URL = "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl"
 MOL_URL = "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar"
+
+BOLTZ1_URL_WITH_FALLBACK = [
+    "https://model-gateway.boltz.bio/boltz1_conf.ckpt",
+    "https://huggingface.co/boltz-community/boltz-1/resolve/main/boltz1_conf.ckpt",
+]
 
 BOLTZ2_URL_WITH_FALLBACK = [
     "https://model-gateway.boltz.bio/boltz2_conf.ckpt",
@@ -107,6 +106,26 @@ class MSAModuleArgs:
 
 
 @dataclass
+class BoltzDiffusionParams:
+    """Diffusion process parameters."""
+
+    gamma_0: float = 0.605
+    gamma_min: float = 1.107
+    noise_scale: float = 0.901
+    rho: float = 8
+    step_scale: float = 1.638
+    sigma_min: float = 0.0004
+    sigma_max: float = 160.0
+    sigma_data: float = 16.0
+    P_mean: float = -1.2
+    P_std: float = 1.5
+    coordinate_augmentation: bool = True
+    alignment_reverse_diff: bool = True
+    synchronize_sigmas: bool = True
+    use_inference_model_cache: bool = True
+
+
+@dataclass
 class Boltz2DiffusionParams:
     """Diffusion process parameters."""
 
@@ -120,8 +139,8 @@ class Boltz2DiffusionParams:
     sigma_data: float = 16.0
     P_mean: float = -1.2
     P_std: float = 1.5
-    coordinate_augmentation: bool = False
-    alignment_reverse_diff: bool = False
+    coordinate_augmentation: bool = True
+    alignment_reverse_diff: bool = True
     synchronize_sigmas: bool = True
 
 
@@ -137,6 +156,42 @@ class BoltzSteeringParams:
     contact_guidance_update: bool = True
     num_gd_steps: int = 20
 
+
+@rank_zero_only
+def download_boltz1(cache: Path) -> None:
+    """Download all the required data.
+
+    Parameters
+    ----------
+    cache : Path
+        The cache directory.
+
+    """
+    # Download CCD
+    ccd = cache / "ccd.pkl"
+    if not ccd.exists():
+        click.echo(
+            f"Downloading the CCD dictionary to {ccd}. You may "
+            "change the cache directory with the --cache flag."
+        )
+        urllib.request.urlretrieve(CCD_URL, str(ccd))  # noqa: S310
+
+    # Download model
+    model = cache / "boltz1_conf.ckpt"
+    if not model.exists():
+        click.echo(
+            f"Downloading the model weights to {model}. You may "
+            "change the cache directory with the --cache flag."
+        )
+        for i, url in enumerate(BOLTZ1_URL_WITH_FALLBACK):
+            try:
+                urllib.request.urlretrieve(url, str(model))  # noqa: S310
+                break
+            except Exception as e:  # noqa: BLE001
+                if i == len(BOLTZ1_URL_WITH_FALLBACK) - 1:
+                    msg = f"Failed to download model from all URLs. Last error: {e}"
+                    raise RuntimeError(msg) from e
+                continue
 
 
 @rank_zero_only
@@ -249,7 +304,7 @@ def check_inputs(data: Path) -> list[Path]:
             if d.is_dir():
                 msg = f"Found directory {d} instead of .fasta or .yaml."
                 raise RuntimeError(msg)
-            if d.suffix not in (".fa", ".fas", ".fasta", ".yml", ".yaml"):
+            if d.suffix.lower() not in (".fa", ".fas", ".fasta", ".yml", ".yaml"):
                 msg = (
                     f"Unable to parse filetype {d.suffix}, "
                     "please provide a .fasta or .yaml file."
@@ -341,6 +396,7 @@ def filter_inputs_affinity(
 
     # Remove them from the input data
     if existing and not override:
+        manifest = Manifest([r for r in manifest.records if r.id not in existing])
         num_skipped = len(existing)
         msg = (
             f"Found some existing affinity predictions ({num_skipped}), "
@@ -353,7 +409,7 @@ def filter_inputs_affinity(
         msg = "Found existing affinity predictions, will override."
         click.echo(msg)
 
-    return Manifest([r for r in manifest.records if r.id not in existing])
+    return manifest
 
 
 def compute_msa(
@@ -489,9 +545,9 @@ def process_input(  # noqa: C901, PLR0912, PLR0915, D103
 ) -> None:
     try:
         # Parse data
-        if path.suffix in (".fa", ".fas", ".fasta"):
+        if path.suffix.lower() in (".fa", ".fas", ".fasta"):
             target = parse_fasta(path, ccd, mol_dir, boltz2)
-        elif path.suffix in (".yml", ".yaml"):
+        elif path.suffix.lower() in (".yml", ".yaml"):
             target = parse_yaml(path, ccd, mol_dir, boltz2)
         elif path.is_dir():
             msg = f"Found directory {path} instead of .fasta or .yaml, skipping."
@@ -633,7 +689,7 @@ def process_inputs(
     ccd_path : Path
         The path to the CCD dictionary.
     max_msa_seqs : int, optional
-        Max number of MSA sequences, by default 4096.
+        Max number of MSA sequences, by default 8192.
     use_msa_server : bool, optional
         Whether to use the MMSeqs2 server for MSA generation, by default False.
     msa_server_username : str, optional
@@ -739,27 +795,9 @@ def process_inputs(
     preprocessing_threads = min(preprocessing_threads, len(data))
     click.echo(f"Processing {len(data)} inputs with {preprocessing_threads} threads.")
 
-    is_daemonic = multiprocessing.current_process().daemon
-    can_use_multiprocessing = (
-        preprocessing_threads > 1 
-        and len(data) > 1 
-        and not is_daemonic
-    )
-    
-    if can_use_multiprocessing:
-        try:
-            with Pool(preprocessing_threads) as pool:
-                list(tqdm(pool.imap(process_input_partial, data), total=len(data)))
-        except AssertionError as e:
-            if "daemonic processes are not allowed to have children" in str(e):
-                with ThreadPoolExecutor(max_workers=preprocessing_threads) as executor:
-                    list(tqdm(executor.map(process_input_partial, data), total=len(data)))
-            else:
-                bt.logging.error(f"Error using multiprocessing: {e}")
-    elif preprocessing_threads > 1 and len(data) > 1 and is_daemonic:
-        click.echo("Using threading for preprocessing")
-        with ThreadPoolExecutor(max_workers=preprocessing_threads) as executor:
-            list(tqdm(executor.map(process_input_partial, data), total=len(data)))
+    if preprocessing_threads > 1 and len(data) > 1:
+        with Pool(preprocessing_threads) as pool:
+            list(tqdm(pool.imap(process_input_partial, data), total=len(data)))
     else:
         for path in tqdm(data):
             process_input_partial(path)
@@ -783,7 +821,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     diffusion_samples: int = 1,
     sampling_steps_affinity: int = 200,
     diffusion_samples_affinity: int = 3,
-    max_parallel_samples: int = 1,
+    max_parallel_samples: Optional[int] = None,
     step_scale: Optional[float] = None,
     write_full_pae: bool = False,
     write_full_pde: bool = False,
@@ -799,10 +837,10 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     api_key_header: Optional[str] = None,
     api_key_value: Optional[str] = None,
     use_potentials: bool = False,
-    model: str = "boltz2",
+    model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
-    preprocessing_threads: int = 4,
+    preprocessing_threads: int = 1,
     max_msa_seqs: int = 8192,
     subsample_msa: bool = True,
     num_subsampled_msa: int = 1024,
@@ -824,14 +862,14 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     torch.set_grad_enabled(False)
 
     # Ignore matmul precision warning
-    torch.set_float32_matmul_precision('highest')
+    torch.set_float32_matmul_precision("highest")
 
     # Set rdkit pickle logic
     Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
     # Set seed if desired
     if seed is not None:
-        seed_everything(int(seed), workers=True)
+        seed_everything(seed)
 
     for key in ["CUEQ_DEFAULT_CONFIG", "CUEQ_DISABLE_AOT_TUNING"]:
         # Disable kernel tuning by default,
@@ -866,10 +904,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Download necessary data and model
-    if model == "boltz2":
+    if model == "boltz1":
+        download_boltz1(cache)
+    elif model == "boltz2":
         download_boltz2(cache)
     else:
-        msg = f"Model {model} not supported. Supported: boltz2."
+        msg = f"Model {model} not supported. Supported: boltz1, boltz2."
         raise ValueError(f"Model {model} not supported.")
 
     # Validate inputs
@@ -877,6 +917,9 @@ def predict(  # noqa: C901, PLR0915, PLR0912
 
     # Check method
     if method is not None:
+        if model == "boltz1":
+            msg = "Method conditioning is not supported for Boltz-1."
+            raise ValueError(msg)
         if method.lower() not in const.method_types_ids:
             method_names = list(const.method_types_ids.keys())
             msg = f"Method {method} not supported. Supported: {method_names}"
@@ -952,10 +995,16 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                 devices = max(1, min(len(filtered_manifest.records), devices))
 
     # Set up model parameters
-    diffusion_params = Boltz2DiffusionParams()
-    step_scale = 1.5 if step_scale is None else step_scale
-    diffusion_params.step_scale = step_scale
-    pairformer_args = PairformerArgsV2()
+    if model == "boltz2":
+        diffusion_params = Boltz2DiffusionParams()
+        step_scale = 1.5 if step_scale is None else step_scale
+        diffusion_params.step_scale = step_scale
+        pairformer_args = PairformerArgsV2()
+    else:
+        diffusion_params = BoltzDiffusionParams()
+        step_scale = 1.638 if step_scale is None else step_scale
+        diffusion_params.step_scale = step_scale
+        pairformer_args = PairformerArgs()
 
     msa_args = MSAModuleArgs(
         subsample_msa=subsample_msa,
@@ -979,9 +1028,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         callbacks=[pred_writer],
         accelerator=accelerator,
         devices=devices,
-        precision="32-true",
-        deterministic=True, 
-        benchmark=False
+        precision=32 if model == "boltz1" else "bf16-mixed",
     )
 
     if filtered_manifest.records:
@@ -989,9 +1036,34 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         msg += "s." if len(filtered_manifest.records) > 1 else "."
         click.echo(msg)
 
-        # Load model once
+        # Create data module
+        if model == "boltz2":
+            data_module = Boltz2InferenceDataModule(
+                manifest=processed.manifest,
+                target_dir=processed.targets_dir,
+                msa_dir=processed.msa_dir,
+                mol_dir=mol_dir,
+                num_workers=num_workers,
+                constraints_dir=processed.constraints_dir,
+                template_dir=processed.template_dir,
+                extra_mols_dir=processed.extra_mols_dir,
+                override_method=method,
+            )
+        else:
+            data_module = BoltzInferenceDataModule(
+                manifest=processed.manifest,
+                target_dir=processed.targets_dir,
+                msa_dir=processed.msa_dir,
+                num_workers=num_workers,
+                constraints_dir=processed.constraints_dir,
+            )
+
+        # Load model
         if checkpoint is None:
-            checkpoint = cache / "boltz2_conf.ckpt"
+            if model == "boltz2":
+                checkpoint = cache / "boltz2_conf.ckpt"
+            else:
+                checkpoint = cache / "boltz1_conf.ckpt"
 
         predict_args = {
             "recycling_steps": recycling_steps,
@@ -1007,12 +1079,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.fk_steering = use_potentials
         steering_args.physical_guidance_update = use_potentials
 
-        model_cls = Boltz2
+        model_cls = Boltz2 if model == "boltz2" else Boltz1
         model_module = model_cls.load_from_checkpoint(
             checkpoint,
             strict=True,
             predict_args=predict_args,
-            map_location="cuda",
+            map_location="cpu",
             diffusion_process_args=asdict(diffusion_params),
             ema=False,
             use_kernels=not no_kernels,
@@ -1022,23 +1094,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
-        data_module = Boltz2InferenceDataModule(
-            manifest=processed.manifest,
-            target_dir=processed.targets_dir,
-            msa_dir=processed.msa_dir,
-            mol_dir=mol_dir,
-            num_workers=num_workers,
-            constraints_dir=processed.constraints_dir,
-            template_dir=processed.template_dir,
-            extra_mols_dir=processed.extra_mols_dir,
-            override_method=method,
+        # Compute structure predictions
+        trainer.predict(
+            model_module,
+            datamodule=data_module,
+            return_predictions=False,
         )
-        with torch.no_grad():
-            trainer.predict(
-                model_module,
-                datamodule=data_module,
-                return_predictions=False,
-            )
 
     # Check if affinity predictions are needed
     if any(r.affinity for r in manifest.records):
@@ -1064,43 +1125,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             output_dir=out_dir / "predictions",
         )
 
-        predict_affinity_args = {
-            "recycling_steps": 5,
-            "sampling_steps": sampling_steps_affinity,
-            "diffusion_samples": diffusion_samples_affinity,
-            "max_parallel_samples": 1,
-            "write_confidence_summary": False,
-            "write_full_pae": False,
-            "write_full_pde": False,
-        }
-
-        # Load affinity model once
-        if affinity_checkpoint is None:
-            affinity_checkpoint = cache / "boltz2_aff.ckpt"
-
-        steering_args = BoltzSteeringParams()
-        steering_args.fk_steering = False
-        steering_args.guidance_update = False
-        steering_args.physical_guidance_update = False
-        steering_args.contact_guidance_update = False
-
-        model_module = Boltz2.load_from_checkpoint(
-            affinity_checkpoint,
-            strict=True,
-            predict_args=predict_affinity_args,
-            map_location="cuda",
-            diffusion_process_args=asdict(diffusion_params),
-            ema=False,
-            pairformer_args=asdict(pairformer_args),
-            msa_args=asdict(msa_args),
-            steering_args=asdict(steering_args),
-            affinity_mw_correction=affinity_mw_correction,
-        )
-        model_module.eval()
-
-        # Swap writer callback
-        trainer.callbacks[0] = pred_writer
-
         data_module = Boltz2InferenceDataModule(
             manifest=manifest_filtered,
             target_dir=out_dir / "predictions",
@@ -1113,10 +1137,47 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             override_method="other",
             affinity=True,
         )
-        with torch.no_grad():
-            trainer.predict(
-                model_module,
-                datamodule=data_module,
-                return_predictions=False,
-            )
 
+        predict_affinity_args = {
+            "recycling_steps": 5,
+            "sampling_steps": sampling_steps_affinity,
+            "diffusion_samples": diffusion_samples_affinity,
+            "max_parallel_samples": 1,
+            "write_confidence_summary": False,
+            "write_full_pae": False,
+            "write_full_pde": False,
+        }
+
+        # Load affinity model
+        if affinity_checkpoint is None:
+            affinity_checkpoint = cache / "boltz2_aff.ckpt"
+
+        steering_args = BoltzSteeringParams()
+        steering_args.fk_steering = False
+        steering_args.physical_guidance_update = False
+        steering_args.contact_guidance_update = False
+        
+        model_module = Boltz2.load_from_checkpoint(
+            affinity_checkpoint,
+            strict=True,
+            predict_args=predict_affinity_args,
+            map_location="cpu",
+            diffusion_process_args=asdict(diffusion_params),
+            ema=False,
+            pairformer_args=asdict(pairformer_args),
+            msa_args=asdict(msa_args),
+            steering_args=asdict(steering_args),
+            affinity_mw_correction=affinity_mw_correction,
+        )
+        model_module.eval()
+
+        trainer.callbacks[0] = pred_writer
+        trainer.predict(
+            model_module,
+            datamodule=data_module,
+            return_predictions=False,
+        )
+
+
+if __name__ == "__main__":
+    cli()
