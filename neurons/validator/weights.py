@@ -20,7 +20,7 @@ async def set_weights(winner_molecules, winner_nanobodies, config):
     else:
         bt.logging.debug(f"Emission override disabled: setting weights for winner molecules: {winner_molecules} and nanobodies: {winner_nanobodies}")
 
-    burn_rate = 0.722
+    burn_rate = 0
     wallet_name = config.wallet.name
     wallet_hotkey = config.wallet.hotkey
     netuid = config.netuid
