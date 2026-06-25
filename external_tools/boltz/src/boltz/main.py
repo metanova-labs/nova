@@ -862,7 +862,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     torch.set_grad_enabled(False)
 
     # Ignore matmul precision warning
-    torch.set_float32_matmul_precision("highest")
+    torch.set_float32_matmul_precision("high")
 
     # Set rdkit pickle logic
     Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
