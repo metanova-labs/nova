@@ -263,6 +263,7 @@ class TemplateModule(nn.Module):
         z: Tensor,
         feats: dict[str, Tensor],
         pair_mask: Tensor,
+        use_kernels: bool = False,
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -343,7 +344,7 @@ class TemplateModule(nn.Module):
         # Compute input projections
         v = self.z_proj(self.z_norm(z[:, None])) + a_tij
         v = v.view(B * T, *v.shape[2:])
-        v = v + self.pairformer(v, pair_mask)
+        v = v + self.pairformer(v, pair_mask, use_kernels=use_kernels)
         v = self.v_norm(v)
         v = v.view(B, T, *v.shape[1:])
 
@@ -412,6 +413,7 @@ class TemplateV2Module(nn.Module):
         z: Tensor,
         feats: dict[str, Tensor],
         pair_mask: Tensor,
+        use_kernels: bool = False,
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -493,7 +495,7 @@ class TemplateV2Module(nn.Module):
         # Compute input projections
         v = self.z_proj(self.z_norm(z[:, None])) + a_tij
         v = v.view(B * T, *v.shape[2:])
-        v = v + self.pairformer(v, pair_mask)
+        v = v + self.pairformer(v, pair_mask, use_kernels=use_kernels)
         v = self.v_norm(v)
         v = v.view(B, T, *v.shape[1:])
 
@@ -567,6 +569,7 @@ class MSAModule(nn.Module):
         z: Tensor,
         emb: Tensor,
         feats: dict[str, Tensor],
+        use_kernels: bool = False,
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -578,6 +581,8 @@ class MSAModule(nn.Module):
             The input embeddings
         feats : dict[str, Tensor]
             Input features
+        use_kernels: bool
+            Whether to use kernels for triangular updates
 
         Returns
         -------
@@ -585,6 +590,27 @@ class MSAModule(nn.Module):
             The output pairwise embeddings.
 
         """
+        # Set chunk sizes
+        if not self.training:
+            if z.shape[1] > const.chunk_size_threshold:
+                chunk_heads_pwa = True
+                chunk_size_transition_z = 64
+                chunk_size_transition_msa = 32
+                chunk_size_outer_product = 4
+                chunk_size_tri_attn = 128
+            else:
+                chunk_heads_pwa = False
+                chunk_size_transition_z = None
+                chunk_size_transition_msa = None
+                chunk_size_outer_product = None
+                chunk_size_tri_attn = 512
+        else:
+            chunk_heads_pwa = False
+            chunk_size_transition_z = None
+            chunk_size_transition_msa = None
+            chunk_size_outer_product = None
+            chunk_size_tri_attn = None
+
         # Load relevant features
         msa = feats["msa"]
         msa = torch.nn.functional.one_hot(msa, num_classes=const.num_tokens)
@@ -613,12 +639,33 @@ class MSAModule(nn.Module):
 
         # Perform MSA blocks
         for i in range(self.msa_blocks):
-            z, m = self.layers[i](
-                z,
-                m,
-                token_mask,
-                msa_mask,
-            )
+            if self.activation_checkpointing and self.training:
+                z, m = torch.utils.checkpoint.checkpoint(
+                    self.layers[i],
+                    z,
+                    m,
+                    token_mask,
+                    msa_mask,
+                    chunk_heads_pwa,
+                    chunk_size_transition_z,
+                    chunk_size_transition_msa,
+                    chunk_size_outer_product,
+                    chunk_size_tri_attn,
+                    use_kernels,
+                )
+            else:
+                z, m = self.layers[i](
+                    z,
+                    m,
+                    token_mask,
+                    msa_mask,
+                    chunk_heads_pwa,
+                    chunk_size_transition_z,
+                    chunk_size_transition_msa,
+                    chunk_size_outer_product,
+                    chunk_size_tri_attn,
+                    use_kernels,
+                )
         return z
 
 
@@ -670,6 +717,12 @@ class MSALayer(nn.Module):
         m: Tensor,
         token_mask: Tensor,
         msa_mask: Tensor,
+        chunk_heads_pwa: bool = False,
+        chunk_size_transition_z: int = None,
+        chunk_size_transition_msa: int = None,
+        chunk_size_outer_product: int = None,
+        chunk_size_tri_attn: int = None,
+        use_kernels: bool = False,
     ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
@@ -689,16 +742,17 @@ class MSALayer(nn.Module):
 
         """
         # Communication to MSA stack
-        m = m + self.pair_weighted_averaging(
-            m, z, token_mask
+        msa_dropout = get_dropout_mask(self.msa_dropout, m, self.training)
+        m = m + msa_dropout * self.pair_weighted_averaging(
+            m, z, token_mask, chunk_heads_pwa
         )
-        m = m + self.msa_transition(m)
+        m = m + self.msa_transition(m, chunk_size_transition_msa)
 
-        z = z + self.outer_product_mean(m, msa_mask)
+        z = z + self.outer_product_mean(m, msa_mask, chunk_size_outer_product)
 
         # Compute pairwise stack
         z = self.pairformer_layer(
-            z, token_mask
+            z, token_mask, chunk_size_tri_attn, use_kernels=use_kernels
         )
 
         return z, m

@@ -35,6 +35,7 @@ from boltz.model.modules.trunkv2 import (
 )
 from boltz.model.optim.ema import EMA
 from boltz.model.optim.scheduler import AlphaFoldLRScheduler
+from boltz.model.modules.utils import autocast_device_type
 
 
 class Boltz2(LightningModule):
@@ -462,7 +463,7 @@ class Boltz2(LightningModule):
                                 template_module = self.template_module
 
                             z = z + template_module(
-                                z, feats, pair_mask, #use_kernels=self.use_kernels
+                                z, feats, pair_mask, use_kernels=self.use_kernels
                             )
 
                         if self.is_msa_compiled and not self.training:
@@ -471,7 +472,7 @@ class Boltz2(LightningModule):
                             msa_module = self.msa_module
 
                         z = z + msa_module(
-                            z, s_inputs, feats, #use_kernels=self.use_kernels
+                            z, s_inputs, feats, use_kernels=self.use_kernels
                         )
 
                         # Revert to uncompiled version for validation
@@ -485,7 +486,7 @@ class Boltz2(LightningModule):
                             z,
                             mask=mask,
                             pair_mask=pair_mask,
-                            #use_kernels=self.use_kernels,
+                            use_kernels=self.use_kernels,
                         )
 
             pdistogram = self.distogram_module(z)
@@ -529,7 +530,7 @@ class Boltz2(LightningModule):
                     "token_trans_bias": token_trans_bias,
                 }
 
-                with torch.autocast("cuda", enabled=False):
+                with torch.autocast(autocast_device_type(s.device.type), enabled=False):
                     struct_out = self.structure_module.sample(
                         s_trunk=s.float(),
                         s_inputs=s_inputs.float(),
@@ -568,7 +569,7 @@ class Boltz2(LightningModule):
                 feats["coords"] = atom_coords  # (multiplicity, L, 3)
                 assert len(feats["coords"].shape) == 3
 
-                with torch.autocast("cuda", enabled=False):
+                with torch.autocast(autocast_device_type(s.device.type), enabled=False):
                     struct_out = self.structure_module(
                         s_trunk=s.float(),
                         s_inputs=s_inputs.float(),
@@ -601,7 +602,7 @@ class Boltz2(LightningModule):
                     ),
                     multiplicity=diffusion_samples,
                     run_sequentially=run_confidence_sequentially,
-                    #use_kernels=self.use_kernels,
+                    use_kernels=self.use_kernels,
                 )
             )
 
@@ -625,7 +626,7 @@ class Boltz2(LightningModule):
             ]
             s_inputs = self.input_embedder(feats, affinity=True)
 
-            with torch.autocast("cuda", enabled=False):
+            with torch.autocast(autocast_device_type(s.device.type), enabled=False):
                 if self.affinity_ensemble:
                     dict_out_affinity1 = self.affinity_module1(
                         s_inputs=s_inputs.detach(),
@@ -633,7 +634,7 @@ class Boltz2(LightningModule):
                         x_pred=coords_affinity,
                         feats=feats,
                         multiplicity=1,
-                        #use_kernels=self.use_kernels,
+                        use_kernels=self.use_kernels,
                     )
 
                     dict_out_affinity1["affinity_probability_binary"] = (
@@ -647,7 +648,7 @@ class Boltz2(LightningModule):
                         x_pred=coords_affinity,
                         feats=feats,
                         multiplicity=1,
-                        #use_kernels=self.use_kernels,
+                        use_kernels=self.use_kernels,
                     )
                     dict_out_affinity2["affinity_probability_binary"] = (
                         torch.nn.functional.sigmoid(
@@ -706,7 +707,7 @@ class Boltz2(LightningModule):
                         x_pred=coords_affinity,
                         feats=feats,
                         multiplicity=1,
-                        #use_kernels=self.use_kernels,
+                        use_kernels=self.use_kernels,
                     )
                     dict_out.update(
                         {

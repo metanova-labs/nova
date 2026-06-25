@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from boltz.data import const
 from boltz.data.pad import pad_dim
-from boltz.model.loss.confidencev2 import lddt_dist
+from boltz.model.loss.confidence import lddt_dist
 
 
 def load_molecules(moldir: str, molecules: list[str]) -> dict[str, Mol]:

@@ -122,11 +122,19 @@ class DiffusionModule(Module):
         diffusion_conditioning,
         multiplicity=1,
     ):
-        s, normed_fourier = self.single_conditioner(
-            times,
-            s_trunk.repeat_interleave(multiplicity, 0),
-            s_inputs.repeat_interleave(multiplicity, 0),
-        )
+        if self.activation_checkpointing and self.training:
+            s, normed_fourier = torch.utils.checkpoint.checkpoint(
+                self.single_conditioner,
+                times,
+                s_trunk.repeat_interleave(multiplicity, 0),
+                s_inputs.repeat_interleave(multiplicity, 0),
+            )
+        else:
+            s, normed_fourier = self.single_conditioner(
+                times,
+                s_trunk.repeat_interleave(multiplicity, 0),
+                s_inputs.repeat_interleave(multiplicity, 0),
+            )
 
         # Sequence-local Atom Attention and aggregation to coarse-grained tokens
         a, q_skip, c_skip, to_keys = self.atom_attention_encoder(
@@ -371,7 +379,7 @@ class AtomDiffusion(Module):
 
             with torch.no_grad():
                 atom_coords_denoised = torch.zeros_like(atom_coords_noisy)
-                sample_ids = torch.arange(multiplicity).to(atom_coords_noisy.device)
+                sample_ids = torch.arange(multiplicity, device=atom_coords_noisy.device)
                 sample_ids_chunks = sample_ids.chunk(
                     multiplicity % max_parallel_samples + 1
                 )

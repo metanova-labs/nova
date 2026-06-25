@@ -114,14 +114,26 @@ class DiffusionTransformer(Module):
             else:
                 bias_l = None
 
-            a = layer(
-                a,  # Float['bm n d'],
-                s,  # Float['bm n ds'],
-                bias_l,  # Float['b n n dp']
-                mask,  # Bool['b n'] | None = None
-                to_keys,
-                multiplicity,
-            )
+            if self.activation_checkpointing and self.training:
+                a = torch.utils.checkpoint.checkpoint(
+                    layer,
+                    a,
+                    s,
+                    bias_l,
+                    mask,
+                    to_keys,
+                    multiplicity,
+                )
+
+            else:
+                a = layer(
+                    a,  # Float['bm n d'],
+                    s,  # Float['bm n ds'],
+                    bias_l,  # Float['b n n dp']
+                    mask,  # Bool['b n'] | None = None
+                    to_keys,
+                    multiplicity,
+                )
         return a
 
 
@@ -231,6 +243,7 @@ class AtomTransformer(Module):
         q = q.view((B * NW, W, -1))
         c = c.view((B * NW, W, -1))
         mask = mask.view(B * NW, W)
+        bias = bias.repeat_interleave(multiplicity, 0)
         bias = bias.view((bias.shape[0] * NW, W, H, -1))
 
         to_keys_new = lambda x: to_keys(x.view(B, NW * W, -1)).view(B * NW, H, -1)
@@ -241,7 +254,7 @@ class AtomTransformer(Module):
             s=c,
             bias=bias,
             mask=mask.float(),
-            multiplicity=multiplicity,
+            multiplicity=1, # bias term already expanded with multiplicity
             to_keys=to_keys_new,
         )
 
