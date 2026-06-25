@@ -9,6 +9,7 @@ import hashlib
 import math
 import shutil
 import glob
+import yaml
 
 os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -55,23 +56,21 @@ class BoltzWrapper:
         torch.manual_seed(self.base_seed)
 
     def _create_yaml_content(self, target: str, protein_sequence: str, ligand_smiles: str) -> str:
-        """Create YAML content for Boltz2 prediction with MSA"""
-
-        yaml_content = f"""version: 1
-sequences:
-  - protein:
-      id: A
-      sequence: {protein_sequence}
-      msa: {os.path.join(self.base_dir, 'data', 'msa_files', target + '.a3m')}
-  - ligand:
-      id: B
-      smiles: {ligand_smiles}
-properties:
-  - affinity:
-      binder: B
-"""
-        
-        return yaml_content
+        data = {
+            "version": 1,
+            "sequences": [
+                {
+                    "protein": {
+                        "id": "A",
+                        "sequence": protein_sequence,
+                        "msa": os.path.join(self.base_dir, "data", "msa_files", target + ".a3m"),
+                    }
+                },
+                {"ligand": {"id": "B", "smiles": ligand_smiles}},
+            ],
+            "properties": [{"affinity": {"binder": "B"}}],
+        }
+        return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
 
     def _preprocess_data_for_boltz(self, valid_molecules_by_uid: dict, score_dict: dict) -> None:
         # Collect all unique molecules across all UIDs
