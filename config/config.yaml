@@ -1,11 +1,11 @@
 # Number of targets and antitargets to select
 protein_selection:
   small_molecule:
-    target: "Q9UKV0-3" # if multiple targets, they should be comma separated
-    clip_interval: [null] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    target: "P01584" # if multiple targets, they should be comma separated
+    clip_interval: [[116, 269]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
   nanobody:
-    target: "P20809" # if multiple targets, they should be comma separated
-    clip_interval: [[36, 199]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    target: "P01584" # if multiple targets, they should be comma separated
+    clip_interval: [[116, 269]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
 
 # Competition parameters
 competition:
