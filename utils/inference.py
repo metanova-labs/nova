@@ -134,8 +134,9 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
     num_gpus = torch.cuda.device_count()
     bt.logging.info(f"Detected GPUs: {num_gpus}. Boltz={run_boltz}, Boltzgen={run_boltzgen}")
 
-    payload_boltz = {"molecules": valid_molecules_by_uid, "score_dict": score_dict, "config": config}
-    payload_boltzgen = {"nanobodies": valid_nanobodies_by_uid, "config": config}
+    plain_config = config.to_dict()
+    payload_boltz = {"molecules": valid_molecules_by_uid, "score_dict": score_dict, "config": plain_config}
+    payload_boltzgen = {"nanobodies": valid_nanobodies_by_uid, "config": plain_config}
 
     per_nanobody_components = None
     per_molecule_components = None

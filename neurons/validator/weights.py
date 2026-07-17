@@ -25,12 +25,12 @@ async def set_weights(winner_molecules, winner_nanobodies, config):
     wallet_hotkey = config.wallet.hotkey
     netuid = config.netuid
 
-    wallet = bt.wallet(
+    wallet = bt.Wallet(
         name=wallet_name,
         hotkey=wallet_hotkey,
     )
 
-    with bt.subtensor(network=config.network) as subtensor:
+    with bt.Subtensor(network=config.network) as subtensor:
         # Download the metagraph for netuid=68
         metagraph = subtensor.metagraph(netuid)
 

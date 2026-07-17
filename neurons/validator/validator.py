@@ -42,7 +42,7 @@ btd = QuicknetBittensorDrandTimelock()
 GITHUB_HEADERS = {}
 
 async def connect_subtensor(network):
-    subtensor = bt.async_subtensor(network=network)
+    subtensor = bt.AsyncSubtensor(network=network)
     await subtensor.initialize()
     return subtensor
 
@@ -281,7 +281,7 @@ async def main(config):
         bt.logging.info("TEST MODE: running without setting weights")
     else:
         try:
-            wallet = bt.wallet(config=config)
+            wallet = bt.Wallet(config=config)
             await check_registration(wallet, subtensor, config.netuid)
         except Exception as e:
             bt.logging.error(f"Wallet/registration check failed: {e}")

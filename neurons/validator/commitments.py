@@ -5,6 +5,7 @@ Commitment retrieval and decryption functionality for the validator
 import asyncio
 import hashlib
 import requests
+import time
 from ast import literal_eval
 from types import SimpleNamespace
 from typing import cast, Optional, Tuple, List
@@ -13,6 +14,10 @@ import bittensor as bt
 from bittensor.core.chain_data.utils import decode_metadata
 
 MAX_RESPONSE_SIZE = 20 * 1024  # 20KB
+GITHUB_API_MAX_ATTEMPTS = 3
+GITHUB_API_BACKOFF_SECONDS = 0.5
+GITHUB_API_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+GITHUB_API_TIMEOUT_SECONDS = 15
 DELIMITER = "|" # separates between molecules and sequences
 SEPARATOR = "," # separates molecules or sequences among themselves
 NULL_TOKEN = "~" # represents an empty list
@@ -91,14 +96,15 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, mi
     # Process the results and build a dictionary with additional metadata.
     result = {}
     for uid, hotkey in enumerate(metagraph.hotkeys):
-        commit = cast(dict, commits[uid])
-        if commit and min_block < commit['block'] < max_block:
-            result[hotkey] = SimpleNamespace(
-                uid=uid,
-                hotkey=hotkey,
-                block=commit['block'],
-                data=decode_metadata(commit)
-            )
+        commit = commits[uid].value
+        if commit is not None:
+            if min_block < commit['block'] < max_block:
+                result[hotkey] = SimpleNamespace(
+                    uid=uid,
+                    hotkey=hotkey,
+                    block=commit['block'],
+                    data=decode_metadata(commit)
+                )
     return result
 
 
@@ -132,6 +138,83 @@ def tuple_safe_eval(uid: int, input_str: str) -> tuple:
     
     return result
 
+def fetch_github_commit_history(
+    api_url: str,
+    params: dict,
+    headers: dict,
+) -> Optional[list]:
+    """Fetch GitHub commit history, retrying transient API failures."""
+    for attempt in range(1, GITHUB_API_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(
+                api_url,
+                params=params,
+                headers=headers,
+                timeout=GITHUB_API_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as error:
+            if attempt == GITHUB_API_MAX_ATTEMPTS:
+                bt.logging.warning(
+                    f"{params['path']}: "
+                    f"GitHub commits API request failed after {attempt} attempts: {error}"
+                )
+                return None
+
+            delay = GITHUB_API_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            bt.logging.warning(
+                f"{params['path']}: "
+                f"GitHub commits API request failed on attempt "
+                f"{attempt}/{GITHUB_API_MAX_ATTEMPTS}: {error}; "
+                f"retrying in {delay:.1f}s"
+            )
+            time.sleep(delay)
+            continue
+
+        if response.status_code == 200:
+            try:
+                commits = response.json()
+            except requests.exceptions.JSONDecodeError as error:
+                bt.logging.warning(
+                    f"{params['path']}: "
+                    f"GitHub commits API returned invalid JSON: {error}"
+                )
+                return None
+
+            if not isinstance(commits, list):
+                bt.logging.warning(
+                    f"{params['path']}: "
+                    "GitHub commits API returned an unexpected response shape"
+                )
+                return None
+            return commits
+
+        is_retryable = response.status_code in GITHUB_API_RETRYABLE_STATUSES
+        if is_retryable and attempt < GITHUB_API_MAX_ATTEMPTS:
+            retry_after = response.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else (
+                    GITHUB_API_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                )
+            except ValueError:
+                delay = GITHUB_API_BACKOFF_SECONDS * (2 ** (attempt - 1))
+
+            bt.logging.warning(
+                f"{params['path']}: "
+                f"GitHub commits API returned {response.status_code} on attempt "
+                f"{attempt}/{GITHUB_API_MAX_ATTEMPTS}; retrying in {delay:.1f}s. "
+            )
+            time.sleep(delay)
+            continue
+
+        bt.logging.warning(
+            f"{params['path']}: "
+            f"GitHub commits API returned {response.status_code} after "
+            f"{attempt} attempt(s)."
+        )
+        return None
+
+    return None
+
 def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, config: dict) -> tuple[dict, dict]:
     """Fetch GitHub submissions and file-specific commit timestamps, then decrypt"""
 
@@ -157,14 +240,26 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
             parts = path.split('/')
             if len(parts) >= 4:
                 api_url = f"https://api.github.com/repos/{parts[0]}/{parts[1]}/commits"
-                try:
-                    resp = requests.get(api_url, params={'path': '/'.join(parts[3:]), 'per_page': 1}, headers=github_headers)
-                    commits = resp.json() if resp.status_code == 200 else []
-                    timestamp = commits[0]['commit']['committer']['date'] if commits else ''
-                    if not timestamp:
+                commits = fetch_github_commit_history(
+                    api_url,
+                    params={
+                        'path': '/'.join(parts[3:]),
+                        'sha': parts[2],
+                        'per_page': 1,
+                    },
+                    headers=github_headers,
+                )
+                if commits is not None:
+                    if commits:
+                        try:
+                            timestamp = commits[0]['commit']['committer']['date']
+                        except (KeyError, TypeError, IndexError) as error:
+                            bt.logging.warning(
+                                f"GitHub commits API returned malformed commit data "
+                                f"for {path}: {error}"
+                            )
+                    else:
                         bt.logging.debug(f"No commit history found for https://github.com/{parts[0]}/{parts[1]}/blob/{parts[2]}/{'/'.join(parts[3:])}")
-                except Exception as e:
-                    bt.logging.warning(f"Error fetching timestamp for https://github.com/{parts[0]}/{parts[1]}: {e}")
         
         github_data[path] = {'content': content, 'timestamp': timestamp}
     

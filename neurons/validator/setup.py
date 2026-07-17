@@ -17,15 +17,16 @@ def get_config():
     """
     load_dotenv()
     parser = argparse.ArgumentParser('Nova')
-    bt.wallet.add_args(parser)
-    bt.subtensor.add_args(parser)
+    bt.Wallet.add_args(parser)
+    bt.Subtensor.add_args(parser)
     
     parser.add_argument('--test_mode', action='store_true', 
                        help='Run test validator without setting weights')
     parser.add_argument('--local_input_file', type=str, default=None, 
                        help='Path to local input file, enables local mode (doesnt get data from chain)')
 
-    config = bt.config(parser)
+    bt.logging.add_args(parser)
+    config = bt.Config(parser)
     config.netuid = 68
     config.network = os.environ.get("SUBTENSOR_NETWORK")
     node = SubstrateInterface(url=config.network)
