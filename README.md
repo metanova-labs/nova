@@ -27,7 +27,7 @@ cd nova
 ```
 # General configs
 SUBTENSOR_NETWORK="ws://localhost:9944" # or your chosen node
-DEVICE_OVERRIDE="cpu" # None to run on GPU
+BT_NO_PARSE_CLI_ARGS=false # false to enable parsing of CLI args
 
 # GitHub authentication
 GITHUB_TOKEN="your_personal_access_token"
