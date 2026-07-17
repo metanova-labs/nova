@@ -2,7 +2,7 @@ abnumber==0.4.4
 anarci==2026.2.13.2
 anarcii==2.0.5
 biopython==1.85
-async-substrate-interface==2.0.2
+async-substrate-interface==2.0.4
 bittensor==10.4.1
 substrate-interface==1.6.2
 boto3==1.42.74

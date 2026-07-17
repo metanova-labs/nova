@@ -26,7 +26,7 @@ cd nova
 2. Prepare your .env file as in example.env:
 ```
 # General configs
-SUBTENSOR_NETWORK="ws://localhost:9944" # or your chosen node
+SUBTENSOR_NETWORK="wss://entrypoint-finney.opentensor.ai:443" # or your chosen node
 BT_NO_PARSE_CLI_ARGS=false # false to enable parsing of CLI args
 
 # GitHub authentication
@@ -45,7 +45,7 @@ AUTO_UPDATE="1" # Set to "0" to disable auto-updates (not recommended)
 
 3. Install dependencies:
    ```bash
-   ./install_deps.sh [--cuda <version>]  #cuda version is optional, default is 12.6
+   ./install_deps.sh [--cuda <version>] && source "$HOME/.local/bin/env"  #cuda version is optional, default is 12.6
    ```
 
 4. Run:

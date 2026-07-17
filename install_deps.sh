@@ -83,6 +83,10 @@ export PYO3_CROSS_PYTHON_VERSION="$PYTHON_VERSION" && cd external_tools/timelock
 # Build timelock Python package:
 cd external_tools/timelock/py && uv pip install --upgrade build && python3 -m build
 uv pip install timelock
+cd ../..
+
+# fix async-substrate-interface dependency issue
+uv pip uninstall scalecodec cyscale -y && uv pip install cyscale==0.5.0 --force-reinstall
 
 echo "Installation complete."
 
