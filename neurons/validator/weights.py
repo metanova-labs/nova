@@ -118,7 +118,7 @@ async def set_weights(winner_molecules, winner_nanobodies, config):
                     await asyncio.sleep(delay_between_retries)
                 else:
                     bt.logging.error("Failed to set weights after multiple attempts. Exiting.")
-                    return []
+                    return payouts
 
     bt.logging.error("Failed to set weights after non-success responses. Exiting.")
-    return []
+    return payouts
