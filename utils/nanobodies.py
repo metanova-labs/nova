@@ -22,7 +22,7 @@ from metanano.utils.igblast_nativeness import features_to_cdrs
 
 from utils.constants import ALLOWED_AAS, HYDROPHOBIC
 from utils.minmax_weighted_rank import rank_binders
-
+from utils.challenge import get_historical_submissions
 
 def normalize_seq(seq: str) -> str:
     return seq.strip().upper()
@@ -148,23 +148,13 @@ def index_top_sequences(target: str, n: int = 50) -> SearchEngine:
 
     # read HF dataset for target
     try:
-        local_path = hf_hub_download(
-            repo_id="Metanova/Submission-Archive",
-            filename=f"{target}_nanobodies.csv",
-            repo_type='dataset',
-            token=os.getenv("HF_TOKEN"),
-        )
-        top_sequences = pd.read_csv(local_path)
-        top_sequences = rank_binders(top_sequences, k=50, max_liability_violations=50)
+        historical_submissions = get_historical_submissions(target, "nanobodies")
+        top_sequences = rank_binders(historical_submissions, k=n, max_liability_violations=50)
         top_sequences = top_sequences.head(n)[['sequence', 'sequence_hash']]
-    except EntryNotFoundError:
-        return None
     except Exception as e:
-        bt.logging.warning(
-            f"Could not download existing {target}_nanobodies.csv from Metanova/Submission-Archive: {e}"
-        )
+        bt.logging.warning(f"Could not get historical submissions for target {target}: {e}")
         return None
-        
+    
     for seq, seq_id in top_sequences.values:
         kmers = generate_kmers(seq, k=search_config.k)
         cdrs = extract_cdrs(seq)

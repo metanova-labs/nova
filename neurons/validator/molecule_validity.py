@@ -1,6 +1,6 @@
 import bittensor as bt
-from rdkit import Chem
-from rdkit.Chem import Descriptors
+from rdkit import Chem, DataStructs
+from rdkit.Chem import Descriptors, rdFingerprintGenerator
 
 from utils import (
     get_smiles, 
@@ -9,7 +9,8 @@ from utils import (
     entry_unique_for_protein_hf,
     find_chemically_identical,
     is_reaction_allowed,
-    contains_atom_type
+    contains_atom_type,
+    get_historical_submissions
 )
 
 
@@ -32,6 +33,22 @@ def validate_molecules_and_calculate_entropy(
     Returns:
         Dictionary mapping UIDs to their list of valid SMILES strings
     """
+
+    # index historical submissions by target (once per epoch)
+    historical_submissions = {target: get_historical_submissions(target, 'molecules') for target in config['small_molecule_target']}
+    morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
+        radius=2,
+        fpSize=2048
+        )
+    for target, historical_submissions_df in historical_submissions.items():
+        if historical_submissions_df is not None:
+            mols = [Chem.MolFromSmiles(smi) for smi in historical_submissions_df["SMILES"]]
+            fps = morgan_gen.GetFingerprints(
+                    mols,
+                    numThreads=8,
+                )
+            historical_submissions_df["fingerprint"] = list(fps)
+
     valid_molecules_by_uid = {}
     
     for uid, data in uid_to_data.items():
@@ -98,7 +115,27 @@ def validate_molecules_and_calculate_entropy(
                 
                 if not is_unique:
                     break
-     
+                
+                # Check if the molecule is diverse enough compared to historical submissions
+                pass_diversity = True
+                miner_mol_fp = morgan_gen.GetFingerprint(mol)
+                for target in config['small_molecule_target']:
+                    if historical_submissions[target] is not None:
+                        similarities = DataStructs.BulkTanimotoSimilarity(
+                                        miner_mol_fp,
+                                        historical_submissions[target]["fingerprint"],
+                                    )
+                        pass_ = not any(sim >= config['max_similarity_to_historical'] for sim in similarities)
+                        if not pass_:
+                            bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not diverse enough compared to historical submissions for target '{target}'")
+                            pass_diversity = False
+                            break
+                    else:
+                        bt.logging.warning(f"UID={uid}: no historical submissions found for target '{target}'")
+                        continue
+                if not pass_diversity:
+                    continue
+    
                 valid_smiles.append(smiles)
                 valid_names.append(molecule)
             except Exception as e:
