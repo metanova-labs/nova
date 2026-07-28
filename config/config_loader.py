@@ -31,6 +31,7 @@ def load_config(path: str = "config/config.yaml"):
     num_molecules = molecule_config["num_molecules"]
     min_entropy = molecule_config["min_entropy"]
     banned_atom_types = molecule_config["banned_atom_types"]
+    max_similarity_to_historical = molecule_config["max_similarity_to_historical"]
 
     boltz_config = config["boltz2_config"]
     boltz_metric = boltz_config["boltz_metric"]
@@ -104,6 +105,7 @@ def load_config(path: str = "config/config.yaml"):
         'enforce_vhh_hallmarks': enforce_vhh_hallmarks,
         'boltzgen_rank_mode': boltzgen_rank_mode,
         'boltzgen_rank_by': boltzgen_rank_by,
+        'max_similarity_to_historical': max_similarity_to_historical,
     }
 
 def load_boltzgen_metrics(path: str = "config/boltzgen_config.yaml") -> dict:

@@ -1,5 +1,6 @@
 import random
 import time
+import os
 
 import bittensor as bt
 from datasets import load_dataset
@@ -7,6 +8,26 @@ from huggingface_hub import hf_hub_url, hf_hub_download, get_hf_file_metadata
 from huggingface_hub.errors import EntryNotFoundError
 import pandas as pd
 from rdkit import Chem
+
+def get_historical_submissions(target: str, entity_type: str, revision: str = None) -> pd.DataFrame:
+    try:
+        local_path = hf_hub_download(
+            repo_id="Metanova/Submission-Archive",
+            filename=f"{target}_{entity_type}.csv",
+            repo_type='dataset',
+            token=os.getenv("HF_TOKEN"),
+            revision=revision
+        )
+        historical_submissions = pd.read_csv(local_path)
+    except EntryNotFoundError:
+        return None
+    except Exception as e:
+        bt.logging.warning(
+            f"Could not download existing {target}_{entity_type}.csv from Metanova/Submission-Archive: {e}"
+        )
+        return None
+    
+    return historical_submissions
 
 def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: str, nanobody_target: str, num_antitargets: int = 0, include_reaction: bool = False) -> dict:
     """
