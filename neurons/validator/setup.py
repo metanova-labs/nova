@@ -24,6 +24,8 @@ def get_config():
                        help='Run test validator without setting weights')
     parser.add_argument('--local_input_file', type=str, default=None, 
                        help='Path to local input file, enables local mode (doesnt get data from chain)')
+    parser.add_argument('--remote_weights', action='store_true', 
+                       help='Use remote wallet instead of local wallet. Only possible when emission override is enabled in config and an external process is setting weights.')
 
     bt.logging.add_args(parser)
     config = bt.Config(parser)

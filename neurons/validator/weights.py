@@ -21,14 +21,15 @@ async def set_weights(winner_molecules, winner_nanobodies, config):
         bt.logging.debug(f"Emission override disabled: setting weights for winner molecules: {winner_molecules} and nanobodies: {winner_nanobodies}")
 
     burn_rate = 0
-    wallet_name = config.wallet.name
-    wallet_hotkey = config.wallet.hotkey
     netuid = config.netuid
 
-    wallet = bt.Wallet(
-        name=wallet_name,
-        hotkey=wallet_hotkey,
-    )
+    if not config.remote_weights:
+        wallet_name = config.wallet.name
+        wallet_hotkey = config.wallet.hotkey
+        wallet = bt.Wallet(
+            name=wallet_name,
+            hotkey=wallet_hotkey,
+        )
 
     with bt.Subtensor(network=config.network) as subtensor:
         # Download the metagraph for netuid=68
@@ -44,10 +45,11 @@ async def set_weights(winner_molecules, winner_nanobodies, config):
         nanobody_incentive = (1.0 - burn_rate) * nanobody_proportion
 
         # Check registration
-        hotkey_ss58 = wallet.hotkey.ss58_address
-        if hotkey_ss58 not in metagraph.hotkeys:
-            bt.logging.error(f"Hotkey {hotkey_ss58} is not registered on netuid {netuid}. Exiting.")
-            return []
+        if not config.remote_weights:
+            hotkey_ss58 = wallet.hotkey.ss58_address
+            if hotkey_ss58 not in metagraph.hotkeys:
+                bt.logging.error(f"Hotkey {hotkey_ss58} is not registered on netuid {netuid}. Exiting.")
+                return []
 
         for target_uid in [winner_molecules, winner_nanobodies]:
             if not is_uid_valid(target_uid, metagraph):
@@ -75,6 +77,9 @@ async def set_weights(winner_molecules, winner_nanobodies, config):
                 payouts.append(("molecule", winner_molecules, molecule_proportion))
             if winner_nanobodies is not None:
                 payouts.append(("nanobody", winner_nanobodies, nanobody_proportion))
+
+            if config.remote_weights:
+                return payouts
         else:
             if winner_molecules is not None:
                 weights[winner_molecules] += molecule_incentive
