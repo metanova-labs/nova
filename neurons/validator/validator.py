@@ -10,6 +10,7 @@ import traceback
 import multiprocessing as mp
 import shutil
 from pathlib import Path
+import random
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(BASE_DIR)
@@ -46,10 +47,41 @@ async def connect_subtensor(network):
     await subtensor.initialize()
     return subtensor
 
+async def connect_subtensor_with_backoff(
+    network,
+    initial_delay=2,
+    max_delay=60,
+    connect_timeout=30,
+):
+    delay = initial_delay
+    attempt = 1
+    while True:
+        try:
+            return await asyncio.wait_for(
+                connect_subtensor(network),
+                timeout=connect_timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            wait_seconds = delay + random.uniform(0, delay * 0.2)
+            bt.logging.warning(
+                f"Subtensor connection attempt {attempt} failed: "
+                f"{type(e).__name__}: {e}. "
+                f"Retrying in {wait_seconds:.1f}s."
+            )
+            await asyncio.sleep(wait_seconds)
+            delay = min(delay * 2, max_delay)
+            attempt += 1
+
 async def reconnect_subtensor(subtensor, network):
     if subtensor is not None:
-        await subtensor.close()
-    return await connect_subtensor(network)
+        try:
+            await subtensor.close()
+        except Exception as e:
+            bt.logging.warning(f"Failed to close old subtensor connection: {e}")
+            
+    return await connect_subtensor_with_backoff(network)
 
 async def call_subtensor(subtensor, network, rpc_fn, timeout_s=10):
     try:
@@ -61,7 +93,7 @@ async def call_subtensor(subtensor, network, rpc_fn, timeout_s=10):
         result = await asyncio.wait_for(rpc_fn(subtensor), timeout=timeout_s)
         return result, subtensor
 
-async def process_epoch(config, current_block, metagraph, subtensor, wallet):
+async def process_epoch(config, current_block, metagraph, subtensor):
     """
     Process a single epoch end-to-end.
     """
@@ -271,14 +303,17 @@ async def main(config):
     """
     test_mode = bool(getattr(config, 'test_mode', False))
     local_input = bool(getattr(config, 'local_input_file', None))
+    remote_weights = bool(getattr(config, 'remote_weights', False))
     
     # Initialize subtensor client
-    subtensor = await connect_subtensor(config.network)
+    subtensor = await connect_subtensor_with_backoff(config.network)
     
     # Wallet + registration check (skipped in test mode)
     wallet = None
     if test_mode:
         bt.logging.info("TEST MODE: running without setting weights")
+    elif remote_weights:
+        bt.logging.info("REMOTE WEIGHTS: running with remote weights")
     else:
         try:
             wallet = bt.Wallet(config=config)
@@ -316,7 +351,7 @@ async def main(config):
             if local_input or current_block % config.epoch_length == 0:
                 # Epoch end - process and set weights
                 config.update(load_config())
-                epoch_result = await process_epoch(config, current_block, metagraph, subtensor, wallet)
+                epoch_result = await process_epoch(config, current_block, metagraph, subtensor)
                 winner_molecules = None
                 winner_nanobodies = None
                 if epoch_result is None:
