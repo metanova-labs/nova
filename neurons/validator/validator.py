@@ -175,16 +175,6 @@ async def process_epoch(config, current_block, metagraph, subtensor):
         boltz = result.boltz
         boltzgen = result.boltzgen
 
-        # update score_dict for molecules 
-        # (before external score sharing because averaging final scores and components is equivalent)
-        # nanobody final scores are calculated after score sharing
-        score_dict = calculate_scores_for_type(
-            score_dict=score_dict,
-            valid_items_by_uid=valid_molecules_by_uid,
-            item_type="molecule",
-            config=config
-        )
-
         test_mode = bool(getattr(config, 'test_mode', False))
         external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
         external_api_key = os.environ.get('VALIDATOR_API_KEY')
@@ -220,6 +210,13 @@ async def process_epoch(config, current_block, metagraph, subtensor):
                 config,
                 rank_mode=rank_mode,
             )
+
+        score_dict = calculate_scores_for_type(
+            score_dict=score_dict,
+            valid_items_by_uid=valid_molecules_by_uid,
+            item_type="molecule",
+            config=config
+        )
         
         score_dict = calculate_scores_for_type(
             score_dict=score_dict,
