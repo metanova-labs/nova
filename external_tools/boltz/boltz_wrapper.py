@@ -32,13 +32,20 @@ def _get_record_id(rec_id, base_seed):
     return (int.from_bytes(h[:8], "little") ^ base_seed) % (2**31 - 1)
 
 class BoltzWrapper:
-    def __init__(self):
+    def __init__(self, shard_id: int = 0, num_shards: int = 1):
         config_path = os.path.join(NOVA_DIR, "config", "boltz_config.yaml")
         with open(config_path, 'r') as f:
             self.config = yaml.load(f, Loader=yaml.FullLoader)
         self.base_dir = NOVA_DIR
 
+        self.shard_id = shard_id
+        self.num_shards = num_shards
+
+        # Shard dirs nest inside boltz_tmp_files so the validator's
+        # cleanup of that directory removes them.
         self.tmp_dir = os.path.join(NOVA_DIR, "external_tools", "boltz", "boltz_tmp_files")
+        if num_shards > 1:
+            self.tmp_dir = os.path.join(self.tmp_dir, f"shard{shard_id}")
         os.makedirs(self.tmp_dir, exist_ok=True)
 
         self.input_dir = os.path.join(self.tmp_dir, "inputs")
@@ -88,6 +95,18 @@ class BoltzWrapper:
                 mol_idx = _get_record_id(smiles, self.base_seed)
 
                 self.unique_molecules[smiles].append((uid, mol_idx))
+
+        # Shard by unique molecule (not by uid)
+        if self.num_shards > 1:
+            ordered = sorted(self.unique_molecules.items(), key=lambda kv: kv[1][0][1])
+            self.unique_molecules = {
+                s: ids for i, (s, ids) in enumerate(ordered)
+                if i % self.num_shards == self.shard_id
+            }
+            bt.logging.info(
+                f"Boltz shard {self.shard_id}/{self.num_shards}: "
+                f"{len(self.unique_molecules)} of {len(ordered)} unique molecules"
+            )
         bt.logging.debug(f"Unique Boltz candidates: {self.unique_molecules}")
 
         bt.logging.debug(f"Writing {len(self.unique_molecules)*len(self.subnet_config['small_molecule_target'])} unique molecules to input directory")
@@ -142,25 +161,16 @@ class BoltzWrapper:
     def _postprocess_data(self, score_dict: dict) -> None:
         scores = self._collect_scores()
 
-        self._distribute_scores(scores) 
+        self._distribute_scores(scores)
         bt.logging.debug(f"final_boltz_scores: {self.final_boltz_scores}")
 
-         # update score_dict with scores that will be used for ranking
-        for uid, data in score_dict.items():
-            if uid in self.final_boltz_scores:
-                smiles_list = []
-                for smiles, id_list in self.unique_molecules.items():
-                    if any(u == uid for u, _ in id_list):
-                        smiles_list.append(smiles)
-                sentinel = math.inf if self.subnet_config['boltz_mode'] == "min" else -math.inf
-                data['molecule_scores'] = [
-                    [self.final_boltz_scores[uid].get(target, {}).get(s, sentinel) for s in smiles_list]
-                    for target in self.subnet_config['small_molecule_target']
-                ]
-            else:
-                target_count = len(self.subnet_config['small_molecule_target'])
-                mode = self.subnet_config['boltz_mode']
-                data['molecule_scores'] = [[math.inf] if mode == "min" else [-math.inf] for _ in range(target_count)]
+        # In sharded mode this shard only knows its own molecules; the parent
+        # re-assembles from the merged union of all shards.
+        if self.num_shards == 1:
+            from utils.inference import assemble_molecule_scores
+            assemble_molecule_scores(
+                score_dict, self.unique_molecules, self.final_boltz_scores, self.subnet_config
+            )
 
     def _extract_metrics(self, metrics: dict) -> dict:
         """Extract all metrics from a metrics dict, returning None for missing values."""
@@ -263,5 +273,5 @@ class BoltzWrapper:
                         self.per_molecule_components[uid][smiles] = {}
                     self.per_molecule_components[uid][smiles][target] = self._extract_metrics(metrics)
         
-        bt.logging.debug(f"per_molecule_components: {self.per_molecule_components}")
+        #bt.logging.debug(f"per_molecule_components: {self.per_molecule_components}")
         

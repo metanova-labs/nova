@@ -19,6 +19,7 @@ from auto_updater import AutoUpdater
 from config.config_loader import load_config
 
 from utils import get_challenge_params_from_blockhash, inference, QuicknetBittensorDrandTimelock
+from utils.stage_timer import stage
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
@@ -134,9 +135,10 @@ async def process_epoch(config, current_block, metagraph, subtensor):
         bt.logging.info(f"Scoring using small molecule target: {small_molecule_target} and nanobody target: {nanobody_target}")
 
         if not config.local_input_file:
-            uid_to_data, current_commitments, decrypted_submissions, push_timestamps = await gather_and_decrypt_commitments(
-                subtensor, metagraph, config.netuid, start_block, current_block, config, GITHUB_HEADERS, btd
-            )
+            with stage("gather_and_decrypt_commitments"):
+                uid_to_data, current_commitments, decrypted_submissions, push_timestamps = await gather_and_decrypt_commitments(
+                    subtensor, metagraph, config.netuid, start_block, current_block, config, GITHUB_HEADERS, btd
+                )
         else:
             from utils import read_local_input_file
             uid_to_data = await read_local_input_file(config.local_input_file, config, subtensor)
@@ -158,32 +160,29 @@ async def process_epoch(config, current_block, metagraph, subtensor):
         }
 
         # Validate submissions
-        valid_molecules_by_uid = validate_molecules_and_calculate_entropy(
-            uid_to_data=uid_to_data,
-            score_dict=score_dict,
-            config=config,
-            allowed_reaction=allowed_reaction
-        )
+        with stage("validate_molecules", n_uids=len(uid_to_data)):
+            valid_molecules_by_uid = validate_molecules_and_calculate_entropy(
+                uid_to_data=uid_to_data,
+                score_dict=score_dict,
+                config=config,
+                allowed_reaction=allowed_reaction
+            )
 
-        valid_nanobodies_by_uid = await validate_nanobodies(
-            uid_to_data=uid_to_data,
-            score_dict=score_dict,
-            config=config,
-        )
+        with stage("validate_nanobodies", n_uids=len(uid_to_data)):
+            valid_nanobodies_by_uid = await validate_nanobodies(
+                uid_to_data=uid_to_data,
+                score_dict=score_dict,
+                config=config,
+            )
 
-        result = inference.main(valid_molecules_by_uid, valid_nanobodies_by_uid, score_dict, config)
+        with stage(
+            "inference",
+            n_mol_uids=len(valid_molecules_by_uid),
+            n_nano_uids=len(valid_nanobodies_by_uid),
+        ):
+            result = inference.main(valid_molecules_by_uid, valid_nanobodies_by_uid, score_dict, config)
         boltz = result.boltz
         boltzgen = result.boltzgen
-
-        # update score_dict for molecules 
-        # (before external score sharing because averaging final scores and components is equivalent)
-        # nanobody final scores are calculated after score sharing
-        score_dict = calculate_scores_for_type(
-            score_dict=score_dict,
-            valid_items_by_uid=valid_molecules_by_uid,
-            item_type="molecule",
-            config=config
-        )
 
         test_mode = bool(getattr(config, 'test_mode', False))
         external_api_url = os.environ.get('SCORE_SHARE_API_URL', 'https://vali-score-share-api.metanova-labs.ai')
@@ -220,6 +219,13 @@ async def process_epoch(config, current_block, metagraph, subtensor):
                 config,
                 rank_mode=rank_mode,
             )
+
+        score_dict = calculate_scores_for_type(
+            score_dict=score_dict,
+            valid_items_by_uid=valid_molecules_by_uid,
+            item_type="molecule",
+            config=config
+        )
         
         score_dict = calculate_scores_for_type(
             score_dict=score_dict,

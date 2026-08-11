@@ -107,9 +107,17 @@ def looks_like_signal_peptide(seq: str, window: int, hydro_min: int, scan_prefix
     return False
 
 async def analyze_developability(seqs: List[str]) -> bool:
+    from metanano.services.async_manager import AsyncServiceManager
     from metanano.services.developability_service import DevelopabilityService
     config = Config()
-    developability_service = DevelopabilityService(config.developability)
+
+    # TNP concurrency. DevelopabilityService otherwise falls back to the global
+    # get_service_manager(), which builds a bare AsyncConfig
+    config.async_config.max_concurrent_tnp = max(1, min(16, int(
+        os.environ.get("NOVA_MAX_CONCURRENT_TNP", "16"))))
+    manager = AsyncServiceManager(config.async_config)
+
+    developability_service = DevelopabilityService(config.developability, manager)
     result = await developability_service.analyze_batch_async(seqs)
     #bt.logging.info(f"Developability analysis result: {result}")
     return result

@@ -15,6 +15,7 @@ from utils import (
     classify_vhh_vh,
     NOVA_DIR,
 )
+from utils.stage_timer import stage
 
 ALLOWED_AAS = set("ACDEFGHIKLMNPQRSTVWY")
 HYDROPHOBIC = set("AILMFWV")
@@ -92,9 +93,11 @@ async def validate_nanobodies(
             bt.logging.warning(f"UID {uid}: contains signal peptide-like sequences")
             continue
 
-        # check for exact duplicates in all previous submissions
+        # check for exact duplicates in all previous submissions.
+        # NOVA_SKIP_HISTORICAL_CHECKS: benchmark-only bypass for replaying an already-archived epoch
+        skip_historical = os.environ.get("NOVA_SKIP_HISTORICAL_CHECKS") == "1" # do not set it in live operation
         is_unique = True
-        for target in config["nanobody_target"]:
+        for target in ([] if skip_historical else config["nanobody_target"]):
             if any(not entry_unique_for_protein_hf(target, h, 'nanobodies') for h in submission_hashes):
                 bt.logging.warning(f"UID {uid}: contains sequences that are not unique for target {target}")
                 is_unique = False
@@ -131,7 +134,9 @@ async def validate_nanobodies(
                     uid_invalid = True
                     break
 
-                if any(is_duplicate(m)[0] for result in similarity_results for m in result.matches):
+                if not skip_historical and any(
+                    is_duplicate(m)[0] for result in similarity_results for m in result.matches
+                ):
                     bt.logging.warning(f"UID {uid}: contains sequences too similar to a top sequence for this target")
                     uid_invalid = True
                     break
@@ -156,7 +161,8 @@ async def validate_nanobodies(
 
     results_by_id = {}
     try:
-        all_nativeness_results = compute_igblast_nativeness(all_nativeness_seqs)
+        with stage("igblast_nativeness", n=len(all_nativeness_seqs)):
+            all_nativeness_results = compute_igblast_nativeness(all_nativeness_seqs)
         results_by_id = {r.sequence_id: r for r in all_nativeness_results}
     except Exception as e:
         bt.logging.warning(f"Batch IgBLAST failed ({e}), falling back to per-UID")
@@ -210,7 +216,8 @@ async def validate_nanobodies(
         all_dev_sequences.extend(seqs)
 
     try:
-        all_dev_results = await analyze_developability(all_dev_sequences)
+        with stage("developability_tnp", n=len(all_dev_sequences)):
+            all_dev_results = await analyze_developability(all_dev_sequences)
     except Exception as e:
         bt.logging.warning(f"Batch developability analysis failed: {e}")
         return {}

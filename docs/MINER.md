@@ -7,7 +7,7 @@ NOVA Compound currently has two tiers in the competition:
 - `Small molecules`: Miners use billion-sized databases to find small molecules that are predicted to have high binding affinity to the target. The binding affinity for small molecules is predicted with [Boltz-2](https://www.biorxiv.org/content/10.1101/2025.06.14.659707v1).
 - `Biologics`: Miners are required to design nanobody-like sequences that perform well in a set of metrics that comprise confidence in the accuracy of the folded complex, strength of the physical interaction between nanobody and target, and potential for toxicity/instability. These metrics are calculated through a modified version of the [BoltzGen](https://hannes-stark.com/assets/boltzgen.pdf) pipeline.
 
-Targets are changed weekly, on Mondays at 3PM UTC. Targets are announced approximately 24 hours before that on NOVA's Discord channel.
+Targets are announced approximately 24 hours before change on NOVA's Discord channel and are kept until further notice.
 
 ---
 
