@@ -64,8 +64,16 @@ def validate_molecules_and_calculate_entropy(
         if len(data["molecules"]) != len(set(data["molecules"])):
             bt.logging.warning(f"UID={uid}: submission contains duplicate molecules")
             continue
-            
-        for molecule in data["molecules"]:
+
+        submitted_molecules = data["molecules"]
+        if len(submitted_molecules) > config['num_molecules']:
+            bt.logging.warning(f"UID={uid}: submission contains {len(submitted_molecules)} molecules, considering only first {config['num_molecules']}")
+            submitted_molecules = submitted_molecules[:config['num_molecules']]
+        elif len(submitted_molecules) < config['num_molecules']:
+            bt.logging.warning(f"UID={uid}: submission contains {len(submitted_molecules)} molecules, expected {config['num_molecules']}, skipping")
+            continue
+
+        for molecule in submitted_molecules:
             try:
                 # Check if reaction is allowed this epoch (if filtering enabled)
                 if config.get('random_valid_reaction') and not is_reaction_allowed(molecule, allowed_reaction):
@@ -139,14 +147,21 @@ def validate_molecules_and_calculate_entropy(
                         bt.logging.warning(f"UID={uid}: no historical submissions found for target '{target}'")
                         continue
                 if not pass_diversity:
-                    continue
-    
+                    break
+
                 valid_smiles.append(smiles)
                 valid_names.append(molecule)
             except Exception as e:
                 bt.logging.warning(f"UID={uid}: error validating molecule='{molecule}': {e}")
                 break
             
+        if len(valid_smiles) != config['num_molecules']:
+            bt.logging.warning(
+                f"UID={uid}: only {len(valid_smiles)} of {config['num_molecules']} "
+                f"molecules passed validation, skipping"
+            )
+            continue
+
         # Check for chemically identical molecules
         if valid_smiles:
             try:
