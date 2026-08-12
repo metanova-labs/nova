@@ -1,17 +1,21 @@
 # Number of targets and antitargets to select
 protein_selection:
   small_molecule:
-    target: "Q9UQM7" # if multiple targets, they should be comma separated
-    clip_interval: [[340, 475]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    target: "P40261" # if multiple targets, they should be comma separated
+    clip_interval: [[2, 260]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
   nanobody:
     target: "P05231" # if multiple targets, they should be comma separated
-    clip_interval: [[30, 212]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    clip_interval: [[27, 212]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    structure: "4O9H" # structure to use for scoring (PDB ID)
+    structure_chain: "A" # chain to use for scoring (if multiple chains in structure)
+    structure_res_index: 21..186 # residue indices in structure to use for scoring
+    structure_binding_site: 24,77,80,82,131,184..186 # binding site residues to use for scoring
 
 # Competition parameters
 competition:
   # No submission blocks
   no_submission_blocks: 10
-  nanobody_weight: 0.6 # proportion of incentive to give to nanobody winner
+  nanobody_weight: 0.4 # proportion of incentive to give to nanobody winner
 
 # Bounty payout settings
 payout:
@@ -20,18 +24,18 @@ payout:
 
 # Molecular property requirements
 molecule_requirements:
-  num_molecules: 1
+  num_molecules: 20
   min_heavy_atoms: 10
   min_rotatable_bonds: 1
   max_rotatable_bonds: 10
   min_entropy: 0.1 # minimum entropy required when num_molecules > 1
-  banned_atom_types: ["Se", "Na", "Fe", "Zn", "S"]
-  max_similarity_to_historical: 0.6 # maximum similarity to historical submissions to be considered valid
+  banned_atom_types: ["Se", "Na", "Fe", "Zn", "B", "Br", "Si"]
+  max_similarity_to_historical: 0.9 # maximum similarity to historical submissions to be considered valid
 
 # Reaction filtering configuration
 reaction_filtering:
   random_valid_reaction: true  # true = one random reaction per epoch, false = only allowed reactions below are allowed
-  allowed_reactions: ["rxn:1", "rxn:2"] # allowed reactions (only used if random_valid_reaction is false)
+  allowed_reactions: ["rxn:1", "rxn:2", "rxn:3", "rxn:4", "rxn:5"] # allowed reactions (only used if random_valid_reaction is false)
 
 # Boltz2 configuration
 boltz2_config:

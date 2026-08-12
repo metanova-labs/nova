@@ -1,3 +1,5 @@
+import os
+
 import bittensor as bt
 from rdkit import Chem, DataStructs
 from rdkit.Chem import Descriptors, rdFingerprintGenerator
@@ -105,9 +107,12 @@ def validate_molecules_and_calculate_entropy(
                     bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not parseable by RDKit: {e}")
                     break
                 
-                # Check if the molecule is unique for all target proteins
+                # Check if the molecule is unique for all target proteins.
+                # NOVA_SKIP_HISTORICAL_CHECKS exists only to replay an already
+                # archived epoch for benchmarking
+                skip_historical = os.environ.get("NOVA_SKIP_HISTORICAL_CHECKS") == "1" # do not set it in live operation
                 is_unique = True
-                for target in config['small_molecule_target']:
+                for target in ([] if skip_historical else config['small_molecule_target']):
                     if not entry_unique_for_protein_hf(target, smiles, 'molecules'):
                         bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not unique for protein '{target}'")
                         is_unique = False
@@ -116,10 +121,10 @@ def validate_molecules_and_calculate_entropy(
                 if not is_unique:
                     break
                 
-                # Check if the molecule is diverse enough compared to historical submissions
+                # Check if the molecule is diverse enough compared to historical submissions.
                 pass_diversity = True
                 miner_mol_fp = morgan_gen.GetFingerprint(mol)
-                for target in config['small_molecule_target']:
+                for target in ([] if skip_historical else config['small_molecule_target']):
                     if historical_submissions[target] is not None:
                         similarities = DataStructs.BulkTanimotoSimilarity(
                                         miner_mol_fp,

@@ -108,10 +108,17 @@ class BoltzgenWrapper:
     def _create_yaml_content(self, design_sequence: str, target_sequence: str, target: str) -> str:
         """Create YAML content for Boltzgen prediction."""
         return f"""entities:
-- protein:
-    id: A
-    sequence: "{target_sequence}"
-    msa: {os.path.join(NOVA_DIR, 'data', 'msa_files', target + '.a3m')}
+- file:
+    path: {os.path.join(NOVA_DIR, 'data', 'structures', self.subnet_config['nanobody_structure'] + '.cif')}
+    include:
+        - chain:
+            id: {self.subnet_config['nanobody_structure_chain']}
+            res_index: {self.subnet_config['nanobody_structure_res_index']}
+            msa: {os.path.join(NOVA_DIR, 'data', 'msa_files', target + '.a3m')}
+    binding_types:
+        - chain:
+            id: {self.subnet_config['nanobody_structure_chain']}
+            binding: {self.subnet_config['nanobody_structure_binding_site']}
 - protein:
     id: B
     sequence: "{design_sequence}"
