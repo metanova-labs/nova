@@ -6,13 +6,13 @@
 
 NOVA harnesses global compute and collective intelligence to navigate huge unexplored chemical spaces, uncovering breakthrough compounds at a fraction of the cost and time.
 
-## System Requirements for validators
+## System Requirements
 
 - Ubuntu 24.04 LTS (recommended)
 - Python 3.10 - 3.12
 - CUDA 12.6 (for GPU support)
 - Sufficient RAM for ML model operations
-- 2 GPU devices for parallel inference. If only one is available, inference will run sequentially which may result in delayed/missing scoring rounds.
+- 2 GPU devices with > 48 GB VRAM for parallel inference. If only one is available, inference will run sequentially which may result in delayed/missing scoring rounds.
 - Internet connection for network participation
 
 ## Installation and Running
@@ -31,6 +31,15 @@ BT_NO_PARSE_CLI_ARGS=false # false to enable parsing of CLI args
 
 # GitHub authentication
 GITHUB_TOKEN="your_personal_access_token"
+
+# Parallel inference settings:
+# The values are illustrative, but should work for most machines 
+# you can use tools/calibrate_perf.py to get the most optimal values for you specific environment
+NOVA_BOLTZ_SHARDS=12
+NOVA_BOLTZ_GPUS=0,0,1,0,0,1,0,1,0,1,0,1
+NOVA_BOLTZGEN_GPUS=1
+NOVA_BOLTZ_THREADS=1
+NOVA_MAX_CONCURRENT_TNP=16
 
 # GitHub configs - FOR MINERS
 GITHUB_REPO_NAME="repo-name"
