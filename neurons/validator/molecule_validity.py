@@ -12,7 +12,8 @@ from utils import (
     find_chemically_identical,
     is_reaction_allowed,
     contains_atom_type,
-    get_historical_submissions
+    get_historical_submissions,
+    is_boltz_safe_smiles
 )
 
 
@@ -114,7 +115,12 @@ def validate_molecules_and_calculate_entropy(
                 except Exception as e:
                     bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not parseable by RDKit: {e}")
                     break
-                
+
+                boltz_safe, boltz_safe_reason = is_boltz_safe_smiles(smiles)
+                if not boltz_safe:
+                    bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not safe for Boltz: {boltz_safe_reason}")
+                    break
+
                 # Check if the molecule is unique for all target proteins.
                 # NOVA_SKIP_HISTORICAL_CHECKS exists only to replay an already
                 # archived epoch for benchmarking
@@ -182,11 +188,19 @@ def validate_molecules_and_calculate_entropy(
             if config['num_molecules'] > 1:
                 try:
                     entropy = compute_maccs_entropy(valid_smiles)
-                    score_dict[uid]["entropy"] = entropy
-                    valid_molecules_by_uid[uid] = {"smiles": valid_smiles, "names": valid_names}
                 except Exception as e:
                     bt.logging.warning(f"UID={uid}: error calculating entropy: {e}")
                     continue
+
+                score_dict[uid]["entropy"] = entropy
+                if entropy < config['min_entropy']:
+                    bt.logging.warning(
+                        f"UID={uid}: MACCS entropy {entropy:.4f} is below the "
+                        f"minimum of {config['min_entropy']}, skipping"
+                    )
+                    continue
+
+                valid_molecules_by_uid[uid] = {"smiles": valid_smiles, "names": valid_names}
             else:
                 score_dict[uid]["entropy"] = None
                 valid_molecules_by_uid[uid] = {"smiles": valid_smiles, "names": valid_names}

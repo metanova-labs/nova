@@ -155,8 +155,8 @@ def entry_unique_for_protein_hf(protein: str, entry_id: str, entity_type: str = 
         if entity_type == 'molecules':
             mol = Chem.MolFromSmiles(entry_id)
             if mol is None:
-                bt.logging.warning(f"Could not parse SMILES string: {smiles}")
-                return True  # Assume unique if we can't parse the SMILES
+                bt.logging.warning(f"Could not parse SMILES string: {entry_id}")
+                return True 
                 
             inchikey = Chem.MolToInchiKey(mol)
             
