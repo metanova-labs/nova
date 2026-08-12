@@ -46,8 +46,16 @@ def calculate_scores_for_type(
         block_submitted = score_dict[uid]['block_submitted']
 
         targets = [[replace_value if not s else s for s in sublist] for sublist in targets]
+
+        if not targets or any(len(target_list) < num_items for target_list in targets):
+            bt.logging.error(
+                f"UID={uid}: {score_key} has {len(targets)} target row(s) with "
+                f"lengths {[len(t) for t in targets]}, expected {num_items} each. Skipping."
+            )
+            continue
+
         combined_item_scores = []
-        
+
         for item_idx in range(num_items):
             # Calculate average target score for this molecule
             target_scores_for_item = [target_list[item_idx] for target_list in targets]
