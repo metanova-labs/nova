@@ -36,7 +36,7 @@ _EPOCH_DEADLINE_FRACTION = 0.7
 # Extra attempts per worker after the first. One is deliberate: a second failure
 # is usually the same failure, and each attempt costs a shard's worth of wall
 # clock that the epoch does not get back.
-_DEFAULT_MAX_RETRIES = 1
+_DEFAULT_MAX_RETRIES = 2
 # A retry is only started if the remaining budget exceeds this multiple of the
 # median observed runtime for that kind of worker. Above 1.0 so a retry that is
 # certain to be killed by the deadline is never started.
@@ -51,6 +51,12 @@ _RETRY_BLIND_FRACTION = 0.5
 # settle around 5.0-5.3 GiB once the model is resident. Set
 # NOVA_WORKER_VRAM_MIB=0 to disable both checks and retry immediately.
 _DEFAULT_WORKER_VRAM_MIB = 6000
+# How long after spawning a worker its VRAM is treated as claimed even though
+# nvidia-smi cannot see it yet. A boltz shard takes tens of seconds to reach
+# Lightning's model_to_device, and until it gets there the memory it is about
+# to take still reads as free -- so a burst of retries admitted against that
+# same reading throws an OOM.
+_VRAM_SETTLE_S = 90.0
 
 
 def _worker_vram_mib() -> int:
@@ -323,22 +329,22 @@ def _run_workers(ctx, specs: list, deadline_s: float | None = None,
             return statistics.median(seen) * _RETRY_TIME_MARGIN
         return (deadline_s or 0.0) * _RETRY_BLIND_FRACTION
 
+    def _reserved_mib(need: int) -> dict:
+        """VRAM promised to workers that nvidia-smi cannot see yet, per GPU.
+        """
+        if not need:
+            return {}
+        now = time.monotonic()
+        held: dict = {}
+        for other in pending.values():
+            if now - other["t_start"] < _VRAM_SETTLE_S:
+                held[other["gpu"]] = held.get(other["gpu"], 0) + need
+        return held
+
     def _pick_gpu(kind, fallback, free=None):
         """Emptiest GPU in the kind's pool, and how much it has free.
-
-        ``free`` lets a caller reuse one reading across several placements --
-        when a whole GPU's worth of shards fails at once, every one of them is
-        placed in the same pass and they should all see the same picture.
-
-        Ranks by measured free VRAM, not by live worker count. Worker count is a
-        poor proxy: co-resident boltz shards were observed holding anywhere from
-        2.4 to 5.3 GiB depending on how far through the model load they were, so
-        the GPU running fewer workers is not reliably the one with room.
-
-        Falls back to counting workers when nvidia-smi is unavailable. Ties keep
-        pool order, which is the order the initial round-robin used, so with
-        nothing else running a retry lands where the original did.
-
+        Ranks by measured free VRAM.
+        Falls back to counting workers when nvidia-smi is unavailable.
         Returns (gpu_id, free_mib) with free_mib None when memory is unreadable.
         """
         pool = gpu_pools.get(kind) or [fallback]
@@ -347,6 +353,10 @@ def _run_workers(ctx, specs: list, deadline_s: float | None = None,
             free = _gpu_free_mib()
         known = {g: free[g] for g in seen if g in free}
         if known:
+            # Charge not-yet-visible workers before ranking, so a GPU that has
+            # just been handed a retry stops looking empty.
+            held = _reserved_mib(_worker_vram_mib())
+            known = {g: v - held.get(g, 0) for g, v in known.items()}
             gpu = max(known, key=lambda g: (known[g], -seen.index(g)))
             return gpu, known[gpu]
         load = {g: 0 for g in seen}
@@ -364,8 +374,7 @@ def _run_workers(ctx, specs: list, deadline_s: float | None = None,
         if max_retries <= 0:
             return False
         if info["attempt"] > max_retries:
-            # Distinguish "gave up" from "never tried" -- both otherwise show up
-            # downstream only as a shard that produced nothing.
+            # Distinguish "gave up" from "never tried"
             bt.logging.error(
                 f"{tag} failed on gpu={info['gpu']} ({err}) after all "
                 f"{max_retries + 1} attempts; giving up on it."
@@ -443,16 +452,16 @@ def _run_workers(ctx, specs: list, deadline_s: float | None = None,
                 if not entry["logged_wait"]:
                     bt.logging.info(
                         f"{tag}: holding retry until a GPU has room -- emptiest "
-                        f"is gpu={gpu} with {free} MiB free, need {need} MiB. "
-                        f"Waiting for running workers to finish."
+                        f"is gpu={gpu} with {free} MiB uncommitted, need {need} "
+                        f"MiB. Waiting for running workers to finish."
                     )
                     entry["logged_wait"] = True
                 continue
 
             waited = time.monotonic() - entry["t_queued"]
-            free_txt = "unknown" if free is None else f"{free} MiB"
+            free_txt = "unknown" if free is None else f"{free} MiB uncommitted"
             bt.logging.warning(
-                f"{tag}: retrying on gpu={gpu} ({free_txt} free"
+                f"{tag}: retrying on gpu={gpu} ({free_txt}"
                 f"{f', after waiting {waited:.0f}s' if waited >= 1 else ''})."
             )
             deferred.remove(entry)
@@ -631,6 +640,23 @@ def infer_worker(gpu_id: int, payload: dict, inference_type: str,
         from external_tools.boltz.boltz_wrapper import BoltzWrapper
         boltz = BoltzWrapper(shard_id=shard_id, num_shards=num_shards)
         boltz.score_molecules(payload["molecules"], payload["score_dict"], payload["config"])
+        assigned = getattr(boltz, "unique_molecules", {}) or {}
+        produced = getattr(boltz, "final_boltz_scores", {}) or {}
+        if assigned and not produced:
+            # boltz can fail without raising. Its predict loop catches CUDA OOM
+            # per batch, logs "ran out of memory, skipping batch", reports
+            # "Number of failed examples: N" and returns normally having scored
+            # nothing. Partial loss (some batches skipped) still reports ok=True; catching
+            # that needs per-molecule coverage accounting, which this is not.
+            return _stamp({
+                "gpu": gpu_id,
+                "ok": False,
+                "shard_id": shard_id,
+                "kind": "boltz",
+                "error": (f"boltz scored none of its {len(assigned)} assigned "
+                          f"molecules and raised nothing; check the worker log "
+                          f"for 'ran out of memory, skipping batch'"),
+            })
         score_dict_updates = {
             uid: {"molecule_scores": payload["score_dict"][uid]["molecule_scores"]}
             for uid in payload["score_dict"]
@@ -800,10 +826,14 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
     boltzgen_results = [r for r in results if "per_nanobody_components" in r]
 
     if run_boltz:
-        lost = num_shards - len(boltz_results)
+        # Count shards that came back with scores, not shards that came back.
+        produced = [r for r in boltz_results if r.get("final_boltz_scores")]
+        lost = num_shards - len(produced)
         if lost > 0:
             bt.logging.error(
-                f"{lost} of {num_shards} boltz shards produced no results."
+                f"{lost} of {num_shards} boltz shards produced no results. "
+                f"Every molecule assigned to them scores as a sentinel, which "
+                f"makes the affected UIDs unrankable."
             )
 
     if run_boltz and boltz_results:

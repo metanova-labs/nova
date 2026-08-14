@@ -121,7 +121,7 @@ class BoltzWrapper:
         except Exception as e:
             bt.logging.error(f"Error writing YAML files: {e}")
             bt.logging.error(traceback.format_exc())
-            return None
+            raise
 
         bt.logging.info(f"Preprocessing data for Boltz2 complete")
 
@@ -153,7 +153,7 @@ class BoltzWrapper:
         except Exception as e:
             bt.logging.error(f"Error running Boltz2: {e}")
             bt.logging.error(traceback.format_exc())
-            return None
+            raise
 
         # Collect scores and distribute results to all UIDs
         self._postprocess_data(score_dict)
