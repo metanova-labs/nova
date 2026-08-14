@@ -1,8 +1,14 @@
 import atexit
+import collections
 import math
 import multiprocessing as mp
 import os
+import shutil
+import statistics
+import subprocess
 import sys
+import time
+from multiprocessing import connection as mp_connection
 from typing import NamedTuple
 
 NOVA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -16,6 +22,78 @@ if not any(_v in os.environ for _v in _thread_vars):
 
 import torch
 import bittensor as bt
+
+
+# How often the parent re-checks the wall deadline while waiting on workers.
+_POLL_INTERVAL_S = 5.0
+# Grace given to a worker to exit once it has reported (or been killed).
+_TEARDOWN_JOIN_S = 30.0
+# Subtensor block time, for deriving the deadline from epoch_length.
+_BLOCK_TIME_S = 12.0
+# Fraction of an epoch inference may consume before workers are killed. The
+# remainder has to cover score sharing, ranking, weight setting and payouts.
+_EPOCH_DEADLINE_FRACTION = 0.7
+# Extra attempts per worker after the first. One is deliberate: a second failure
+# is usually the same failure, and each attempt costs a shard's worth of wall
+# clock that the epoch does not get back.
+_DEFAULT_MAX_RETRIES = 1
+# A retry is only started if the remaining budget exceeds this multiple of the
+# median observed runtime for that kind of worker. Above 1.0 so a retry that is
+# certain to be killed by the deadline is never started.
+_RETRY_TIME_MARGIN = 1.5
+# Estimate used before any worker of that kind has finished, as a fraction of
+# the whole budget. Nothing has been observed yet, so this is what bounds a
+# blind retry: it permits one early on and refuses one near the deadline.
+_RETRY_BLIND_FRACTION = 0.5
+# VRAM a single worker is assumed to need, in MiB. Used two ways: to warn up
+# front when the shard layout cannot fit, and to hold a retry back until its
+# target GPU actually has room. 6000 comes from observed boltz shards, which
+# settle around 5.0-5.3 GiB once the model is resident. Set
+# NOVA_WORKER_VRAM_MIB=0 to disable both checks and retry immediately.
+_DEFAULT_WORKER_VRAM_MIB = 6000
+
+
+def _worker_vram_mib() -> int:
+    """Assumed per-worker VRAM footprint in MiB. 0 disables capacity checks."""
+    raw = os.environ.get("NOVA_WORKER_VRAM_MIB")
+    if not raw:
+        return _DEFAULT_WORKER_VRAM_MIB
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        bt.logging.warning(
+            f"Ignoring non-integer NOVA_WORKER_VRAM_MIB={raw!r}; "
+            f"using {_DEFAULT_WORKER_VRAM_MIB}."
+        )
+        return _DEFAULT_WORKER_VRAM_MIB
+
+
+def _gpu_free_mib() -> dict:
+    """Free VRAM per GPU id, or {} if it cannot be read.
+
+    Uses nvidia-smi rather than torch.cuda.mem_get_info on purpose: the parent
+    process has no CUDA context and must not create one.
+    """
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.free",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=15, check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        bt.logging.warning(
+            f"Could not read GPU free memory ({type(e).__name__}: {e}); "
+            f"falling back to worker-count placement."
+        )
+        return {}
+    free = {}
+    for line in out.strip().splitlines():
+        idx, _, mib = line.partition(",")
+        try:
+            free[int(idx)] = int(mib)
+        except ValueError:
+            continue
+    return free
 
 
 class BoltzResult:
@@ -74,7 +152,7 @@ def _log_inference_summary(results: list, num_shards: int) -> None:
     bt.logging.info(" ".join(parts))
 
 
-def assemble_molecule_scores(score_dict: dict, unique_molecules: dict,
+def assemble_molecule_scores(score_dict: dict, valid_molecules_by_uid: dict,
                              final_boltz_scores: dict, subnet_config: dict) -> None:
     """Write molecule_scores into score_dict from (possibly merged) shard results.
 
@@ -83,28 +161,16 @@ def assemble_molecule_scores(score_dict: dict, unique_molecules: dict,
     """
     sentinel = math.inf if subnet_config['boltz_mode'] == "min" else -math.inf
     for uid, data in score_dict.items():
-        if uid in final_boltz_scores:
-            smiles_list = [s for s, id_list in unique_molecules.items()
-                           if any(u == uid for u, _ in id_list)]
-            data['molecule_scores'] = [
-                [final_boltz_scores[uid].get(target, {}).get(s, sentinel) for s in smiles_list]
-                for target in subnet_config['small_molecule_target']
-            ]
-        else:
-            target_count = len(subnet_config['small_molecule_target'])
-            data['molecule_scores'] = [[sentinel] for _ in range(target_count)]
+        smiles_list = (valid_molecules_by_uid.get(uid) or {}).get('smiles') or []
+        by_target = final_boltz_scores.get(uid) or {}
+        data['molecule_scores'] = [
+            [(by_target.get(target) or {}).get(s, sentinel) for s in smiles_list]
+            for target in subnet_config['small_molecule_target']
+        ]
 
 
 def _stop_bt_log_listener() -> None:
     """Stop bittensor's QueueListener before multiprocessing tears the queue down.
-
-    Each spawn child builds its own LoggingMachine, with an mp.Queue and a
-    _monitor thread blocked on queue.get(). BaseProcess._bootstrap runs
-    multiprocessing's _exit_function in a finally block, which closes that
-    queue's pipe while _monitor is still reading it -> OSError(EBADF). bittensor
-    stops the listener via atexit, which only fires later at interpreter
-    shutdown -- too late in a child. Stopping here also flushes records that
-    would otherwise be dropped from the tail of the worker's log.
     """
     listener = getattr(bt.logging, "_listener", None)
     if listener is None or getattr(listener, "_thread", None) is None:
@@ -116,40 +182,395 @@ def _stop_bt_log_listener() -> None:
         pass
 
 
-def _proc_entry(queue, gpu_id, payload, inference_type, shard_id, num_shards):
+def _proc_entry(conn, gpu_id, payload, inference_type, shard_id, num_shards):
     """Entry point for a non-daemonic worker process.
 
     multiprocessing.Pool marks its workers daemonic, and daemonic processes may
     not have children -- which is what DataLoader(num_workers>0) needs. Using
     ctx.Process(daemon=False) lifts that restriction.
+
+    Exactly one message is sent on ``conn``, then it is closed. The parent
+    relies on that close (or on the one the kernel performs when the process
+    dies) to tell success from death -- see _run_workers.
     """
     try:
-        queue.put(infer_worker(gpu_id, payload, inference_type, shard_id, num_shards))
+        conn.send(infer_worker(gpu_id, payload, inference_type, shard_id, num_shards))
     except Exception as e:
         import traceback
-        queue.put({"gpu": gpu_id, "ok": False, "shard_id": shard_id,
-                   "error": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()})
+        try:
+            conn.send({"gpu": gpu_id, "ok": False, "shard_id": shard_id,
+                       "error": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()})
+        except Exception:
+            # Nothing left to report through; the parent will see EOF.
+            pass
     finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
         _stop_bt_log_listener()
 
 
-def _run_workers(ctx, specs: list) -> list:
-    """Run (gpu_id, payload, kind, shard_id, num_shards) specs concurrently."""
-    queue = ctx.Queue()
-    procs = []
-    for gpu_id, payload, kind, shard_id, num_shards in specs:
+def _failed_result(info: dict, error: str) -> dict:
+    """Stand-in result for a worker that never reported one of its own.
+
+    Deliberately omits per_molecule_components / per_nanobody_components so the
+    merge and summary paths in main() skip it the same way they skip a worker
+    that reported ok=False.
+    """
+    return {"gpu": info["gpu"], "ok": False, "shard_id": info["shard_id"],
+            "kind": info["kind"], "error": error}
+
+
+def _reap(proc, timeout: float = _TEARDOWN_JOIN_S) -> None:
+    """Join a worker, escalating to kill if it will not exit."""
+    proc.join(timeout=timeout)
+    if proc.is_alive():
+        proc.kill()
+        proc.join(timeout=timeout)
+
+
+def _max_retries() -> int:
+    """Extra attempts allowed per worker. 0 disables retrying entirely."""
+    raw = os.environ.get("NOVA_INFERENCE_MAX_RETRIES")
+    if not raw:
+        return _DEFAULT_MAX_RETRIES
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        bt.logging.warning(
+            f"Ignoring non-integer NOVA_INFERENCE_MAX_RETRIES={raw!r}; "
+            f"using {_DEFAULT_MAX_RETRIES}."
+        )
+        return _DEFAULT_MAX_RETRIES
+
+
+def _worker_tmp_dir(kind: str, shard_id: int, num_shards: int) -> str | None:
+    """Scratch directory a worker of this kind owns, or None if it has none.
+
+    Recomputed here rather than imported because importing
+    either wrapper in the parent pulls in the whole model package. Both are
+    per-worker -- boltz shards get their own subdirectory.
+    """
+    if kind == "boltzgen":
+        return os.path.join(NOVA_DIR, "external_tools", "boltzgen", "boltzgen_tmp_files")
+    if kind != "boltz":
+        return None
+    d = os.path.join(NOVA_DIR, "external_tools", "boltz", "boltz_tmp_files")
+    if num_shards > 1:
+        d = os.path.join(d, f"shard{shard_id}")
+    return d
+
+
+def _run_workers(ctx, specs: list, deadline_s: float | None = None,
+                 gpu_pools: dict | None = None,
+                 max_retries: int | None = None) -> list:
+    """Run (gpu_id, payload, kind, shard_id, num_shards) specs concurrently.
+
+    Every worker gets its own one-way pipe rather than sharing one Queue. A
+    worker killed by a signal -- the OOM killer, a CUDA fault, a segfault in a
+    native extension -- never reaches _proc_entry's except clause, so with a
+    shared queue the parent blocked on get() forever. A pipe closes when its writer dies, so
+    connection.wait() reports it readable and recv() raises EOFError, turning an
+    indefinite hang into a definite failure result.
+
+    Per-worker pipes also contain two smaller hazards. A child killed midway
+    through writing a result leaves a partial pickle on its own pipe instead of
+    corrupting a queue every other worker still has to read; and a result that
+    fails to pickle raises in the child (where _proc_entry can report it) rather
+    than in a Queue feeder thread that only logs to stderr.
+
+    ``deadline_s`` bounds the whole wave. Workers still pending when it expires
+    are killed and reported as failures.
+
+    A failed worker is relaunched while budget remains. 
+
+    ``gpu_pools`` maps kind -> candidate GPU ids; a retry goes to the least
+    loaded of them rather than back to the GPU that just failed.
+    """
+    gpu_pools = gpu_pools or {}
+    if max_retries is None:
+        max_retries = _max_retries()
+
+    all_procs = []
+    pending = {}  # recv conn -> worker info
+    deferred = []  # retries waiting for GPU capacity
+    results = []
+    # Successful wall times per kind, used to price a retry against the budget.
+    durations: dict[str, list[float]] = {}
+    retried = 0
+    t_deadline = None if deadline_s is None else time.monotonic() + deadline_s
+
+    def _spawn(gpu_id, payload, kind, shard_id, num_shards, attempt):
+        recv_conn, send_conn = ctx.Pipe(duplex=False)
         p = ctx.Process(target=_proc_entry,
-                        args=(queue, gpu_id, payload, kind, shard_id, num_shards),
+                        args=(send_conn, gpu_id, payload, kind, shard_id, num_shards),
                         daemon=False)
         p.start()
-        procs.append(p)
-    results = [queue.get() for _ in specs]
-    for p in procs:
-        p.join()
+        # The parent's copy of the write end must go, or the pipe never reports
+        # EOF when the child dies
+        send_conn.close()
+        all_procs.append(p)
+        pending[recv_conn] = {"proc": p, "gpu": gpu_id, "shard_id": shard_id,
+                              "kind": kind, "payload": payload,
+                              "num_shards": num_shards, "attempt": attempt,
+                              "t_start": time.monotonic()}
+
+    def _retry_cost(kind) -> float:
+        """Wall time to assume a fresh worker of this kind will need."""
+        seen = durations.get(kind)
+        if seen:
+            return statistics.median(seen) * _RETRY_TIME_MARGIN
+        return (deadline_s or 0.0) * _RETRY_BLIND_FRACTION
+
+    def _pick_gpu(kind, fallback, free=None):
+        """Emptiest GPU in the kind's pool, and how much it has free.
+
+        ``free`` lets a caller reuse one reading across several placements --
+        when a whole GPU's worth of shards fails at once, every one of them is
+        placed in the same pass and they should all see the same picture.
+
+        Ranks by measured free VRAM, not by live worker count. Worker count is a
+        poor proxy: co-resident boltz shards were observed holding anywhere from
+        2.4 to 5.3 GiB depending on how far through the model load they were, so
+        the GPU running fewer workers is not reliably the one with room.
+
+        Falls back to counting workers when nvidia-smi is unavailable. Ties keep
+        pool order, which is the order the initial round-robin used, so with
+        nothing else running a retry lands where the original did.
+
+        Returns (gpu_id, free_mib) with free_mib None when memory is unreadable.
+        """
+        pool = gpu_pools.get(kind) or [fallback]
+        seen = list(dict.fromkeys(pool))  # dedupes a weighted pool like 0,0,1,0,1
+        if free is None:
+            free = _gpu_free_mib()
+        known = {g: free[g] for g in seen if g in free}
+        if known:
+            gpu = max(known, key=lambda g: (known[g], -seen.index(g)))
+            return gpu, known[gpu]
+        load = {g: 0 for g in seen}
+        for other in pending.values():
+            if other["gpu"] in load:
+                load[other["gpu"]] += 1
+        return min(load, key=load.get), None
+
+    def _maybe_retry(info, failure) -> bool:
+        nonlocal retried
+        kind, shard_id = info["kind"], info["shard_id"]
+        tag = f"{kind} shard={shard_id}/{info['num_shards']}"
+        err = failure.get("error")
+
+        if max_retries <= 0:
+            return False
+        if info["attempt"] > max_retries:
+            # Distinguish "gave up" from "never tried" -- both otherwise show up
+            # downstream only as a shard that produced nothing.
+            bt.logging.error(
+                f"{tag} failed on gpu={info['gpu']} ({err}) after all "
+                f"{max_retries + 1} attempts; giving up on it."
+            )
+            return False
+
+        cost = _retry_cost(kind)
+        remaining = None if t_deadline is None else t_deadline - time.monotonic()
+        if remaining is not None and remaining <= cost:
+            bt.logging.error(
+                f"{tag} failed on gpu={info['gpu']} ({err}) and will NOT be retried: "
+                f"{remaining:.0f}s left before the inference deadline, a retry needs "
+                f"about {cost:.0f}s."
+            )
+            return False
+
+        # Reap before respawning so the dead worker's GPU memory is released
+        # before its replacement tries to allocate.
+        _reap(info["proc"])
+
+        tmp = _worker_tmp_dir(kind, shard_id, info["num_shards"])
+        if tmp and os.path.isdir(tmp):
+            try:
+                shutil.rmtree(tmp)
+            except OSError as e:
+                # Leftover predictions would be skipped by boltz, so a retry on
+                # a directory we could not clear would come back short.
+                bt.logging.error(
+                    f"{tag}: could not clear {tmp} ({e}); not retrying, because a "
+                    f"retry over stale predictions would silently skip molecules."
+                )
+                return False
+
+        budget = "no deadline" if remaining is None else f"{remaining:.0f}s left"
+        bt.logging.warning(
+            f"{tag} failed on gpu={info['gpu']} (attempt {info['attempt']} of "
+            f"{max_retries + 1}): {err}\n{failure.get('tb', '')}\n"
+            f"Queued for retry ({budget}, ~{cost:.0f}s needed)."
+        )
+        deferred.append({"info": info, "failure": failure, "cost": cost,
+                         "tag": tag, "t_queued": time.monotonic(),
+                         "logged_wait": False})
+        return True
+
+    def _admit_deferred() -> None:
+        """Launch queued retries whose target GPU now has room.
+
+        Retries are queued rather than respawned on the spot because the failure
+        that most often needs one is CUDA OOM, and at the instant a shard OOMs
+        its siblings are still holding the memory it needs. Respawning straight
+        back into a saturated GPU just reproduces the OOM and burns the attempt
+        """
+        nonlocal retried
+        if not deferred:
+            return
+        need = _worker_vram_mib()
+        free_now = _gpu_free_mib()  # one reading for the whole pass
+        for entry in list(deferred):
+            info, tag = entry["info"], entry["tag"]
+            remaining = (None if t_deadline is None
+                         else t_deadline - time.monotonic())
+            if remaining is not None and remaining <= entry["cost"]:
+                bt.logging.error(
+                    f"{tag}: gave up waiting for GPU capacity after "
+                    f"{time.monotonic() - entry['t_queued']:.0f}s -- "
+                    f"{remaining:.0f}s left, a retry needs about "
+                    f"{entry['cost']:.0f}s. Not retrying."
+                )
+                deferred.remove(entry)
+                results.append(entry["failure"])
+                continue
+
+            gpu, free = _pick_gpu(info["kind"], info["gpu"], free=free_now)
+            if need and free is not None and free < need:
+                if not entry["logged_wait"]:
+                    bt.logging.info(
+                        f"{tag}: holding retry until a GPU has room -- emptiest "
+                        f"is gpu={gpu} with {free} MiB free, need {need} MiB. "
+                        f"Waiting for running workers to finish."
+                    )
+                    entry["logged_wait"] = True
+                continue
+
+            waited = time.monotonic() - entry["t_queued"]
+            free_txt = "unknown" if free is None else f"{free} MiB"
+            bt.logging.warning(
+                f"{tag}: retrying on gpu={gpu} ({free_txt} free"
+                f"{f', after waiting {waited:.0f}s' if waited >= 1 else ''})."
+            )
+            deferred.remove(entry)
+            retried += 1
+            _spawn(gpu, info["payload"], info["kind"], info["shard_id"],
+                   info["num_shards"], info["attempt"] + 1)
+
+    for gpu_id, payload, kind, shard_id, num_shards in specs:
+        _spawn(gpu_id, payload, kind, shard_id, num_shards, attempt=1)
+
+    while pending or deferred:
+        timeout = _POLL_INTERVAL_S
+        if t_deadline is not None:
+            remaining = t_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            timeout = min(timeout, remaining)
+
+        _admit_deferred()
+
+        if not pending:
+            # Nothing running, but a retry is still waiting on capacity. Sleep
+            # instead of spinning; the deadline check above bounds the wait.
+            if deferred:
+                time.sleep(min(timeout, _POLL_INTERVAL_S))
+            continue
+
+        for conn in mp_connection.wait(list(pending), timeout=timeout):
+            info = pending.pop(conn)
+            try:
+                r = conn.recv()
+            except EOFError:
+                _reap(info["proc"])
+                r = _failed_result(
+                    info,
+                    f"worker died without reporting a result "
+                    f"(exitcode={info['proc'].exitcode})",
+                )
+            except Exception as e:
+                _reap(info["proc"])
+                r = _failed_result(
+                    info, f"unreadable result from worker: {type(e).__name__}: {e}"
+                )
+            finally:
+                conn.close()
+
+            if r.get("ok"):
+                durations.setdefault(info["kind"], []).append(
+                    time.monotonic() - info["t_start"]
+                )
+            elif _maybe_retry(info, r):
+                # Superseded: only the last attempt for a shard reaches results,
+                # so callers still see exactly one entry per spec.
+                continue
+            results.append(r)
+
+    for entry in deferred:
+        # Queued but never admitted: the deadline expired while it waited for a
+        # GPU with room. Its original failure is the honest result to report.
+        bt.logging.error(
+            f"{entry['tag']}: never retried -- waited "
+            f"{time.monotonic() - entry['t_queued']:.0f}s for GPU capacity and "
+            f"the inference deadline expired first."
+        )
+        results.append(entry["failure"])
+    deferred.clear()
+
+    for conn, info in pending.items():
+        # No retry here: the budget that would pay for one is what just expired.
+        bt.logging.error(
+            f"Worker {info['kind']} shard={info['shard_id']} gpu={info['gpu']} "
+            f"still running after {deadline_s:.0f}s deadline; killing it."
+        )
+        info["proc"].kill()
+        conn.close()
+        results.append(_failed_result(info, f"timed out after {deadline_s:.0f}s"))
+
+    for proc in all_procs:
+        _reap(proc)
+
     for r in results:
         if not r.get("ok"):
             bt.logging.error(f"Worker failed: {r.get('error')}\n{r.get('tb', '')}")
+    if retried:
+        bt.logging.info(f"{retried} worker(s) were relaunched after failing.")
     return results
+
+
+def _inference_deadline_s(config) -> float | None:
+    """Wall clock budget for one inference wave, or None to wait indefinitely.
+
+    Defaults to a fraction of the epoch rather than a constant: a timeout longer
+    than an epoch cannot help, and a hardcoded one rots when epoch_length or the
+    molecule count changes. NOVA_INFERENCE_TIMEOUT_S overrides it; 0 disables
+    the deadline entirely (the old hang-forever behaviour).
+    """
+    raw = os.environ.get("NOVA_INFERENCE_TIMEOUT_S")
+    if raw:
+        try:
+            override = float(raw)
+        except ValueError:
+            bt.logging.warning(
+                f"Ignoring non-numeric NOVA_INFERENCE_TIMEOUT_S={raw!r}"
+            )
+        else:
+            return override if override > 0 else None
+
+    epoch_length = getattr(config, "epoch_length", None)
+    if epoch_length is None and isinstance(config, dict):
+        epoch_length = config.get("epoch_length")
+    try:
+        epoch_length = float(epoch_length)
+    except (TypeError, ValueError):
+        bt.logging.warning(
+            "No usable epoch_length in config; inference workers will run without a deadline."
+        )
+        return None
+    return epoch_length * _BLOCK_TIME_S * _EPOCH_DEADLINE_FRACTION
 
 
 def _merge_boltz_shards(results: list) -> tuple:
@@ -170,17 +591,6 @@ def _merge_boltz_shards(results: list) -> tuple:
 
 def _log_runtime_config(gpu_id, inference_type, shard_id, num_shards, pid) -> None:
     """Emit the EFFECTIVE runtime config, read back from the libraries themselves.
-
-    Deliberately reports torch.get_num_threads() rather than only the env var:
-    the two have disagreed in a way that cost real benchmark runs.
-    boltz_wrapper.py set OMP_NUM_THREADS=1 while every shard actually ran 26
-    threads, because torch was already imported by the time it ran. Separately,
-    .env silently overrode an exported NOVA_BOLTZ_SHARDS. In both cases a
-    setting that failed to apply looked identical to one that worked.
-
-    Both the read-back and the env var are printed: their *disagreement* is the
-    signal. print() rather than bt.logging, for the same reason as STAGE_BEGIN
-    -- a child can lose queued log records on exit.
     """
     try:
         devices = torch.cuda.device_count()
@@ -249,15 +659,6 @@ def infer_worker(gpu_id: int, payload: dict, inference_type: str,
     else:
         return {"gpu": gpu_id, "ok": False, "error": f"unknown inference_type={inference_type}"}
 
-
-def _merge_boltz_into_score_dict(score_dict: dict, boltz_result: dict) -> None:
-    if not boltz_result or "boltz" not in boltz_result:
-        return
-    for uid, data in boltz_result["boltz"].items():
-        if uid in score_dict and "molecule_scores" in data:
-            score_dict[uid]["molecule_scores"] = data["molecule_scores"]
-
-
 def _merge_boltzgen_into_score_dict(
     score_dict: dict,
     final_boltzgen_scores: dict | None,
@@ -277,7 +678,11 @@ def _merge_boltzgen_into_score_dict(
             continue
         sequences = list(valid_nanobodies_by_uid.get(uid, {}).get("sequences", []))
         if not sequences:
-            sequences = list(final_boltzgen_scores[uid].keys())
+            bt.logging.warning(
+                f"_merge_boltzgen_into_score_dict: UID {uid} has inference results but no "
+                f"validated sequences; skipping."
+            )
+            continue
         rows = []
         for target in nanobody_target:
             row = [
@@ -333,15 +738,42 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
             return default
         return [int(x) for x in raw.split(",") if x.strip() != ""]
 
+    num_shards = int(os.environ.get("NOVA_BOLTZ_SHARDS", "1"))
+    num_shards = max(1, num_shards)
+
+    # The default has to depend on the shard count.When sharding, spread by default and
+    # let NOVA_BOLTZ_GPUS override for a deliberate weighting.
     if num_gpus >= 2 and run_boltz and run_boltzgen:
-        boltz_gpus = _gpu_list("NOVA_BOLTZ_GPUS", [0])
+        default_boltz = list(range(num_gpus)) if num_shards > 1 else [0]
+        boltz_gpus = _gpu_list("NOVA_BOLTZ_GPUS", default_boltz)
         boltzgen_gpus = _gpu_list("NOVA_BOLTZGEN_GPUS", [1])
     else:
         boltz_gpus = _gpu_list("NOVA_BOLTZ_GPUS", [0])
         boltzgen_gpus = _gpu_list("NOVA_BOLTZGEN_GPUS", [0])
 
-    num_shards = int(os.environ.get("NOVA_BOLTZ_SHARDS", "1"))
-    num_shards = max(1, num_shards)
+    if run_boltz and num_shards > 1:
+        # Say up front whether the layout can physically fit.
+        per_gpu = collections.Counter(
+            boltz_gpus[s % len(boltz_gpus)] for s in range(num_shards)
+        )
+        if run_boltzgen:
+            per_gpu[boltzgen_gpus[0]] += 1
+        bt.logging.info(
+            f"Worker layout by GPU: "
+            f"{ {g: n for g, n in sorted(per_gpu.items())} }"
+        )
+        need_each = _worker_vram_mib()
+        free_now = _gpu_free_mib() if need_each else {}
+        for g, n in sorted(per_gpu.items()):
+            have = free_now.get(g)
+            if have is not None and n * need_each > have:
+                bt.logging.warning(
+                    f"GPU {g} is assigned {n} concurrent workers needing about "
+                    f"{n * need_each} MiB but only {have} MiB is free. Expect "
+                    f"CUDA OOM. Lower NOVA_BOLTZ_SHARDS, or spread the load with "
+                    f"NOVA_BOLTZ_GPUS (e.g. "
+                    f"{','.join(str(x) for x in range(num_gpus))})."
+                )
 
     specs = []
     if run_boltz:
@@ -350,21 +782,34 @@ def main(valid_molecules_by_uid: dict, valid_nanobodies_by_uid: dict, score_dict
     if run_boltzgen:
         specs.append((boltzgen_gpus[0], payload_boltzgen, "boltzgen", 0, 1))
 
+    deadline_s = _inference_deadline_s(config)
+    retries = _max_retries()
+    gpu_pools = {"boltz": boltz_gpus, "boltzgen": boltzgen_gpus}
     bt.logging.info(
         f"Launching {len(specs)} workers: boltz shards={num_shards if run_boltz else 0} "
         f"on GPUs {boltz_gpus if run_boltz else []}, "
-        f"boltzgen on GPUs {boltzgen_gpus[:1] if run_boltzgen else []}"
+        f"boltzgen on GPUs {boltzgen_gpus[:1] if run_boltzgen else []}, "
+        f"deadline={f'{deadline_s:.0f}s' if deadline_s else 'none'}, "
+        f"max_retries={retries}"
     )
 
-    results = _run_workers(ctx, specs)
+    results = _run_workers(ctx, specs, deadline_s=deadline_s,
+                           gpu_pools=gpu_pools, max_retries=retries)
     boltz_results = [r for r in results if r.get("shard_id") is not None
                      and r.get("gpu") is not None and "per_molecule_components" in r]
     boltzgen_results = [r for r in results if "per_nanobody_components" in r]
 
+    if run_boltz:
+        lost = num_shards - len(boltz_results)
+        if lost > 0:
+            bt.logging.error(
+                f"{lost} of {num_shards} boltz shards produced no results."
+            )
+
     if run_boltz and boltz_results:
         unique_molecules, per_molecule_components, final_boltz_scores = \
             _merge_boltz_shards(boltz_results)
-        assemble_molecule_scores(score_dict, unique_molecules, final_boltz_scores, plain_config)
+        assemble_molecule_scores(score_dict, valid_molecules_by_uid, final_boltz_scores, plain_config)
 
     if run_boltzgen and boltzgen_results and boltzgen_results[0].get("ok"):
         per_nanobody_components = boltzgen_results[0].get("per_nanobody_components")

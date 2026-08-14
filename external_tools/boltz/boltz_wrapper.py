@@ -127,6 +127,7 @@ class BoltzWrapper:
 
     def score_molecules(self, valid_molecules_by_uid: dict, score_dict: dict, subnet_config: dict) -> None:
         self.subnet_config = subnet_config
+        self.valid_molecules_by_uid = valid_molecules_by_uid
 
         self._preprocess_data_for_boltz(valid_molecules_by_uid, score_dict)
 
@@ -169,7 +170,7 @@ class BoltzWrapper:
         if self.num_shards == 1:
             from utils.inference import assemble_molecule_scores
             assemble_molecule_scores(
-                score_dict, self.unique_molecules, self.final_boltz_scores, self.subnet_config
+                score_dict, self.valid_molecules_by_uid, self.final_boltz_scores, self.subnet_config
             )
 
     def _extract_metrics(self, metrics: dict) -> dict:

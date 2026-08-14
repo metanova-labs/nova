@@ -611,8 +611,22 @@ async def apply_external_scores(
                                 if target_idx is None:
                                     continue
                                 avg_score = avg_metrics.get("score")
-                                if avg_score is not None and target_idx < len(uid_targets) and mol_idx < len(uid_targets[target_idx]):
-                                    uid_targets[target_idx][mol_idx] = float(avg_score)
+                                if avg_score is None:
+                                    continue
+                                if (target_idx >= len(uid_targets)
+                                        or mol_idx >= len(uid_targets[target_idx])):
+                                    row_len = (len(uid_targets[target_idx])
+                                               if target_idx < len(uid_targets) else None)
+                                    bt.logging.warning(
+                                        f"UID={uid}: dropped peer average for molecule "
+                                        f"'{name}'/{protein_name}: need molecule_scores"
+                                        f"[{target_idx}][{mol_idx}] but got {len(uid_targets)} "
+                                        f"target row(s), row length {row_len}. "
+                                        f"molecule_scores is out of step with the validated "
+                                        f"submission."
+                                    )
+                                    continue
+                                uid_targets[target_idx][mol_idx] = float(avg_score)
 
                 bt.logging.info(
                     f"Replaced molecule scores with validator averages for {len(name_to_target_avgs)} molecule(s)"
