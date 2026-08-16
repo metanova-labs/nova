@@ -12,6 +12,10 @@ from config.config_loader import load_boltzgen_metrics
 WAIT_SECONDS = 300
 FINALIZATION_BUFFER_BLOCKS = 100
 
+SENTINEL_NEG = -999.99
+SENTINEL_POS = 999.99
+_SENTINEL_EPS = 1e-6
+
 # Per-target molecule metrics to share (scalar only; chains_ptm and
 # pair_chains_iptm are nested dicts and heavy_atom_count is invariant)
 MOLECULE_METRIC_KEYS = [
@@ -97,6 +101,103 @@ def _safe_float(val) -> Optional[float]:
             return float(val)
         except (TypeError, ValueError):
             return None
+
+def _is_sentinel_score(val) -> bool:
+    """True for processing-fail sentinels: ±inf, NaN, ±999.99."""
+    if val is None:
+        return False
+    try:
+        x = float(val)
+    except (TypeError, ValueError):
+        return False
+    if math.isnan(x) or math.isinf(x):
+        return True
+    return abs(x - SENTINEL_NEG) < _SENTINEL_EPS or abs(x - SENTINEL_POS) < _SENTINEL_EPS
+
+
+def _parse_score(val) -> Optional[float]:
+    """Parse a posted/local score. None if missing/unparseable. Does not rewrite inf → 999.99."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _average_peer_scores(raw_values: List[Any]) -> Optional[float]:
+    """
+    Average peer combined scores, dropping sentinels when any finite score exists.
+
+    Returns
+    -------
+    float
+        Mean of finite non-sentinel scores, or ±inf when every reported score is a
+        sentinel. None if nobody reported a numeric score (all null/missing).
+    """
+    parsed = [_parse_score(v) for v in raw_values]
+    parsed = [v for v in parsed if v is not None]
+    finite = [v for v in parsed if not _is_sentinel_score(v)]
+    if finite:
+        return sum(finite) / len(finite)
+    if not parsed:
+        return None
+    # If all reported values are sentinels, consider a legitimate failure.
+    return math.inf if parsed[0] > 0 else -math.inf
+
+
+def _score_for_ranking(avg_score: float) -> float:
+    """Map a filtered average onto the value ranking.py expects."""
+    if _is_sentinel_score(avg_score) or math.isinf(avg_score):
+        return math.inf if float(avg_score) > 0 else -math.inf
+    return float(avg_score)
+
+
+def _overlay_filtered_molecule_scores(
+    name_to_target_avgs: Dict[str, Dict[str, Dict[str, Any]]],
+    name_to_entries: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """Overwrite API `score` averages in-place using per-validator rows."""
+    for name, averaged in name_to_target_avgs.items():
+        entries = name_to_entries.get(name)
+        if not entries:
+            # Could not audit this molecule: do not trust API score.
+            for protein_metrics in averaged.values():
+                if isinstance(protein_metrics, dict):
+                    protein_metrics.pop("score", None)
+            bt.logging.warning(
+                f"No per-validator rows for {name}; dropping API score average "
+                f"and keeping local combined scores for this molecule"
+            )
+            continue
+
+        by_protein: Dict[str, List[Any]] = {}
+        for entry in entries:
+            protein = entry.get("target_protein")
+            if not protein:
+                continue
+            by_protein.setdefault(protein, []).append(entry.get("score"))
+
+        for protein_name, metrics in averaged.items():
+            if not isinstance(metrics, dict):
+                continue
+            filtered = _average_peer_scores(by_protein.get(protein_name, []))
+            if filtered is None:
+                metrics.pop("score", None)
+            else:
+                metrics["score"] = filtered
+                n_raw = len(by_protein.get(protein_name, []))
+                n_finite = sum(
+                    1
+                    for v in by_protein.get(protein_name, [])
+                    if (p := _parse_score(v)) is not None and not _is_sentinel_score(p)
+                )
+                if n_finite < n_raw:
+                    bt.logging.info(
+                        f"Filtered sentinel/null scores for {name}/{protein_name}: "
+                        f"used {n_finite}/{n_raw} finite peer score(s), "
+                        f"avg={filtered}"
+                    )
 
 
 def _strip_none_metrics(
@@ -292,7 +393,10 @@ async def apply_external_scores(
 
             for entry in molecule_validations:
                 score = mol_score_lookup.get((entry["name"], entry.get("target_protein")))
-                entry["score"] = _safe_float(score)
+                if score is None or _is_sentinel_score(score):
+                    entry["score"] = None
+                else:
+                    entry["score"] = _safe_float(score)
 
         # --- Build nanobody per-target validations ---
         nanobody_validations = []
@@ -479,24 +583,60 @@ async def apply_external_scores(
                 )
                 hash_to_target_avgs = None
 
-        if name_to_target_avgs:
-            bt.logging.debug(
-                f"Score-share molecule averages from API (epoch={epoch}): "
-                f"{_strip_none_metrics(name_to_target_avgs)}"
-            )
         if hash_to_target_avgs:
             bt.logging.debug(
                 f"Score-share nanobody averages from API (epoch={epoch}): "
                 f"{_strip_none_metrics(_rekey_by_sequence(hash_to_target_avgs, uid_to_nano_id))}"
             )
 
-        # --- Per-validator logging (non-essential; isolated from score application) ---
-        all_mol_names_for_log: set[str] = set()
-        for mol_data in (valid_molecules_by_uid or {}).values():
-            for name in (mol_data or {}).get("names", []) or []:
-                if name:
-                    all_mol_names_for_log.add(name)
+        # Overlay filtered molecule `score` from per-validator rows before apply.
+        # Failures are per-name: still apply API affinity/confidence averages.
+        if name_to_target_avgs:
+            name_to_entries: Dict[str, List[Dict[str, Any]]] = {}
 
+            async def _get_mol_validations(name: str):
+                url = base_url + f"/molecule-targets/{name}/{int(epoch)}/validations"
+                s, entries = await _get_target_validations(url, headers)
+                return name, s, entries
+
+            try:
+                mol_val_results = await asyncio.gather(
+                    *[_get_mol_validations(n) for n in name_to_target_avgs.keys()],
+                    return_exceptions=True,
+                )
+                for result in mol_val_results:
+                    if isinstance(result, Exception):
+                        bt.logging.warning(
+                            f"Score-share molecule per-validator fetch raised: {result}"
+                        )
+                        continue
+                    name, status_code_mol, entries = result
+                    if status_code_mol >= 400 or entries is None:
+                        bt.logging.warning(
+                            f"Score-share molecule per-validator fetch failed for "
+                            f"{name}@{epoch} (status={status_code_mol}); "
+                            f"will not apply API score for this molecule"
+                        )
+                        continue
+                    name_to_entries[name] = entries
+                    bt.logging.info(
+                        f"Per-validator molecule scores for {name}@{epoch}: "
+                        f"{_group_validations_by_protein(entries)}"
+                    )
+                _overlay_filtered_molecule_scores(name_to_target_avgs, name_to_entries)
+            except Exception as e:
+                bt.logging.warning(
+                    f"Score-share molecule per-validator fetch failed (epoch={epoch}): {e}; "
+                    f"will not apply API score averages"
+                )
+                _overlay_filtered_molecule_scores(name_to_target_avgs, {})
+
+            bt.logging.debug(
+                f"Score-share molecule averages from API (epoch={epoch}): "
+                f"{_strip_none_metrics(name_to_target_avgs)}"
+            )
+
+        # --- Nanobody per-validator logging (non-essential; isolated from apply) ---
         all_nano_hashes_for_log: set[str] = set()
         hash_to_seq_for_log: Dict[str, str] = {}
         for nano_data in (valid_nanobodies_by_uid or {}).values():
@@ -507,37 +647,6 @@ async def apply_external_scores(
                     all_nano_hashes_for_log.add(h)
                     if s:
                         hash_to_seq_for_log[h] = s
-
-        if all_mol_names_for_log:
-            async def _get_mol_validations(name: str) -> Tuple[str, int, Optional[List[Dict[str, Any]]]]:
-                url = base_url + f"/molecule-targets/{name}/{int(epoch)}/validations"
-                s, entries = await _get_target_validations(url, headers)
-                return name, s, entries
-
-            try:
-                mol_val_results = await asyncio.gather(
-                    *[_get_mol_validations(n) for n in all_mol_names_for_log],
-                    return_exceptions=True,
-                )
-                for result in mol_val_results:
-                    if isinstance(result, Exception):
-                        bt.logging.debug(f"Score-share molecule per-validator fetch raised: {result}")
-                        continue
-                    name, status_code_mol, entries = result
-                    if status_code_mol >= 400 or entries is None:
-                        bt.logging.debug(
-                            f"Score-share molecule per-validator fetch failed for {name}@{epoch} "
-                            f"(status={status_code_mol})"
-                        )
-                        continue
-                    bt.logging.info(
-                        f"Per-validator molecule scores for {name}@{epoch}: "
-                        f"{_group_validations_by_protein(entries)}"
-                    )
-            except Exception as e:
-                bt.logging.debug(
-                    f"Score-share molecule per-validator logging failed (epoch={epoch}): {e}"
-                )
 
         if all_nano_hashes_for_log:
             async def _get_nano_validations(seq_hash: str) -> Tuple[str, int, Optional[List[Dict[str, Any]]]]:
@@ -589,7 +698,7 @@ async def apply_external_scores(
                                                 comp[key] = avg_val
                                         avg_score = avg_metrics.get("score")
                                         if avg_score is not None:
-                                            comp["score"] = float(avg_score)
+                                            comp["score"] = _score_for_ranking(avg_score)
 
                 if target_proteins:
                     protein_to_idx = {p: i for i, p in enumerate(target_proteins)}
@@ -626,7 +735,7 @@ async def apply_external_scores(
                                         f"submission."
                                     )
                                     continue
-                                uid_targets[target_idx][mol_idx] = float(avg_score)
+                                uid_targets[target_idx][mol_idx] = _score_for_ranking(avg_score)
 
                 bt.logging.info(
                     f"Replaced molecule scores with validator averages for {len(name_to_target_avgs)} molecule(s)"
