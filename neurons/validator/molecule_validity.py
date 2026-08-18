@@ -175,6 +175,7 @@ def validate_molecules_and_calculate_entropy(
         if len(valid_smiles) != config['num_molecules']:
             bt.logging.warning(
                 f"UID={uid}: submission contains molecules that do not pass validity criteria, skipping."
+            )
             continue
 
         # Check for chemically identical molecules
