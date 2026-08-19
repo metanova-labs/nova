@@ -2,7 +2,7 @@ import os
 
 import bittensor as bt
 from rdkit import Chem, DataStructs
-from rdkit.Chem import Descriptors, rdFingerprintGenerator
+from rdkit.Chem import Descriptors, rdFingerprintGenerator, FilterCatalog
 
 from utils import (
     get_smiles, 
@@ -37,6 +37,11 @@ def validate_molecules_and_calculate_entropy(
         Dictionary mapping UIDs to their list of valid SMILES strings
     """
 
+    # build BRENK filter (once per epoch)
+    filter_params = FilterCatalog.FilterCatalogParams()
+    filter_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.BRENK)
+    brenk_catalog = FilterCatalog.FilterCatalog(filter_params)
+    
     # index historical submissions by target (once per epoch)
     historical_submissions = {target: get_historical_submissions(target, 'molecules') for target in config['small_molecule_target']}
     morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
@@ -104,6 +109,12 @@ def validate_molecules_and_calculate_entropy(
                 try:
                     mol = Chem.MolFromSmiles(smiles)
 
+                    if brenk_catalog.HasMatch(mol):
+                        brenk_reasons = [e.GetDescription() for e in brenk_catalog.GetMatches(mol)]
+                        if brenk_reasons:
+                            bt.logging.warning(f"UID={uid}: molecule='{molecule}' is disallowed by BRENK: {'; '.join(brenk_reasons)}")
+                            break
+
                     if contains_atom_type(mol, config['banned_atom_types']):
                         bt.logging.warning(f"UID={uid}: molecule='{molecule}' contains banned atom types")
                         break
@@ -163,8 +174,7 @@ def validate_molecules_and_calculate_entropy(
             
         if len(valid_smiles) != config['num_molecules']:
             bt.logging.warning(
-                f"UID={uid}: only {len(valid_smiles)} of {config['num_molecules']} "
-                f"molecules passed validation, skipping"
+                f"UID={uid}: submission contains molecules that do not pass validity criteria, skipping."
             )
             continue
 
