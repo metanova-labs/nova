@@ -30,7 +30,7 @@ molecule_requirements:
   max_rotatable_bonds: 10
   min_entropy: 0.1 # minimum entropy required when num_molecules > 1
   banned_atom_types: ["Se", "Na", "Fe", "Zn", "B", "Br", "Si"]
-  max_similarity_to_historical: 0.9 # maximum similarity to historical submissions to be considered valid
+  max_similarity_to_historical: 0.7 # maximum similarity to historical submissions to be considered valid
 
 # Reaction filtering configuration
 reaction_filtering:
