@@ -1,7 +1,7 @@
 from .molecules import (
     get_smiles, 
     get_heavy_atom_count, 
-    compute_maccs_entropy,
+    compute_fingerprint_entropy,
     find_chemically_identical,
     is_boltz_safe_smiles,
     contains_atom_type

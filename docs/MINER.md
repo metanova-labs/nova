@@ -95,7 +95,7 @@ Implemented in `neurons/validator/molecule_validity.validate_molecules_and_calcu
 8. **Chemically identical**  
    After collecting all valid SMILES/names in the list, the validator checks for chemically identical molecules (e.g. same InChIKey). If any are found, the **entire** submission is rejected (duplicate molecules with different names still count as invalid).
 
-If all checks pass, the validator stores valid molecules for that UID and may compute **MACCS entropy** when `num_molecules > 1`; entropy is currently a minimum value that needs to be obtained.
+If all checks pass, the validator stores valid molecules for that UID and may compute **fingerprint entropy** when `num_molecules > 1`; entropy is currently a minimum value that needs to be obtained.
 
 **Takeaway for miners:**  
 Submit exactly the number of molecules required; ensure correct reaction type when filtering is on; ensure SMILES are valid, heavy-atom and rotatable-bond counts are in range, and molecules are unique per target and not chemically duplicated.

@@ -28,9 +28,6 @@ from utils import (
     get_sequence_from_protein_code,
     upload_file_to_github,
     get_challenge_params_from_blockhash,
-    get_heavy_atom_count,
-    compute_maccs_entropy,
-
 )
 from utils.btdr import QuicknetBittensorDrandTimelock
 from combinatorial_db.reactions import get_random_reaction_product

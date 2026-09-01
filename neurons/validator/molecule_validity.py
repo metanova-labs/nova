@@ -7,7 +7,7 @@ from rdkit.Chem import Descriptors, rdFingerprintGenerator, FilterCatalog
 from utils import (
     get_smiles, 
     get_heavy_atom_count, 
-    compute_maccs_entropy,
+    compute_fingerprint_entropy,
     entry_unique_for_protein_hf,
     find_chemically_identical,
     is_reaction_allowed,
@@ -24,7 +24,7 @@ def validate_molecules_and_calculate_entropy(
     allowed_reaction: str = None
 ) -> dict[int, dict[str, list[str]]]:
     """
-    Validates molecules for all UIDs and calculates their MACCS entropy.
+    Validates molecules for all UIDs and calculates their fingerprint entropy.
     Updates the score_dict with entropy values.
     
     Args:
@@ -197,7 +197,7 @@ def validate_molecules_and_calculate_entropy(
         if valid_smiles:
             if config['num_molecules'] > 1:
                 try:
-                    entropy = compute_maccs_entropy(valid_smiles)
+                    entropy = compute_fingerprint_entropy(valid_smiles)
                 except Exception as e:
                     bt.logging.warning(f"UID={uid}: error calculating entropy: {e}")
                     continue
@@ -205,7 +205,7 @@ def validate_molecules_and_calculate_entropy(
                 score_dict[uid]["entropy"] = entropy
                 if entropy < config['min_entropy']:
                     bt.logging.warning(
-                        f"UID={uid}: MACCS entropy {entropy:.4f} is below the "
+                        f"UID={uid}: fingerprint entropy {entropy:.4f} is below the "
                         f"minimum of {config['min_entropy']}, skipping"
                     )
                     continue

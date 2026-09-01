@@ -47,7 +47,7 @@ Validates molecular submissions:
   - Duplicate molecules
   - Reaction compatibility (if filtering enabled)
   - Chemical validity (RDKit parsing)
-  - MACCS entropy calculation
+  - Fingerprint entropy calculation
 
 #### `nanobody_validity.py`
 Validates nanobody (protein sequence) submissions:
