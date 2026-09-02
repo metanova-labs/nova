@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 import time
 from rdkit import Chem
-from rdkit.Chem import MACCSkeys, AllChem
+from rdkit.Chem import rdFingerprintGenerator as rfg
+from rdkit.Chem import AllChem
 from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
 from huggingface_hub.errors import EntryNotFoundError
 import bittensor as bt
@@ -60,9 +61,9 @@ def get_heavy_atom_count(smiles: str) -> int:
     return mol.GetNumHeavyAtoms()
 
 
-def compute_maccs_entropy(smiles_list: list[str]) -> float:
+def compute_fingerprint_entropy(smiles_list: list[str]) -> float:
     """
-    Computes fingerprint entropy from MACCS keys for a list of SMILES.
+    Computes fingerprint entropy for a list of SMILES.
 
     Parameters:
         smiles_list (list of str): Molecules in SMILES format.
@@ -70,14 +71,15 @@ def compute_maccs_entropy(smiles_list: list[str]) -> float:
     Returns:
         avg_entropy (float): Average entropy per bit.
     """
-    n_bits = 167  # RDKit uses 167 bits (index 0 is always 0)
+    n_bits = 2048
     bit_counts = np.zeros(n_bits)
     valid_mols = 0
 
     for smi in smiles_list:
         mol = Chem.MolFromSmiles(smi)
         if mol:
-            fp = MACCSkeys.GenMACCSKeys(mol)
+            generator = rfg.GetAtomPairGenerator(fpSize=2048)
+            fp = generator.GetFingerprint(mol)
             arr = np.array(fp)
             bit_counts += arr
             valid_mols += 1

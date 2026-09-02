@@ -4,12 +4,12 @@ protein_selection:
     target: "P40261" # if multiple targets, they should be comma separated
     clip_interval: [[2, 260]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
   nanobody:
-    target: "P05231" # if multiple targets, they should be comma separated
-    clip_interval: [[27, 212]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
-    structure: "4O9H" # structure to use for scoring (PDB ID)
+    target: "P20809" # if multiple targets, they should be comma separated
+    clip_interval: [[31, 199]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    structure: "6O4O" # structure to use for scoring (PDB ID)
     structure_chain: "A" # chain to use for scoring (if multiple chains in structure)
-    structure_res_index: 21..186 # residue indices in structure to use for scoring
-    structure_binding_site: 24,77,80,82,131,184..186 # binding site residues to use for scoring
+    structure_res_index: 2..169 # residue indices in structure to use for scoring
+    structure_binding_site: 31..35,37..38,40,88,135..138,142 # binding site residues to use for scoring
 
 # Competition parameters
 competition:
@@ -28,9 +28,9 @@ molecule_requirements:
   min_heavy_atoms: 10
   min_rotatable_bonds: 1
   max_rotatable_bonds: 10
-  min_entropy: 0.1 # minimum entropy required when num_molecules > 1
+  min_entropy: 0.25 # minimum entropy required when num_molecules > 1
   banned_atom_types: ["Se", "Na", "Fe", "Zn", "B", "Br", "Si"]
-  max_similarity_to_historical: 0.7 # maximum similarity to historical submissions to be considered valid
+  max_similarity_to_historical: 0.6 # maximum similarity to historical submissions to be considered valid
 
 # Reaction filtering configuration
 reaction_filtering:

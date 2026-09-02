@@ -25,7 +25,7 @@ import bittensor as bt
 
 from boltz.main import predict
 from utils.proteins import get_sequence_from_protein_code
-from utils.molecules import compute_maccs_entropy, is_boltz_safe_smiles, get_heavy_atom_count
+from utils.molecules import is_boltz_safe_smiles, get_heavy_atom_count
 
 def _get_record_id(rec_id, base_seed):
     h = hashlib.sha256(str(rec_id).encode()).digest()

@@ -88,5 +88,10 @@ cd ../..
 # fix async-substrate-interface dependency issue
 uv pip uninstall scalecodec cyscale -y && uv pip install cyscale==0.5.0 --force-reinstall
 
+# Download NanoBodyBuilder2 and Boltz-2 weights into the venv / cache
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "Downloading model weights..."
+"$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/tools/download_model_weights.py"
+
 echo "Installation complete."
 
