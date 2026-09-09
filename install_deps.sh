@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -o pipefail
 
 # Usage: ./install_deps.sh [--cuda <version>]
 #   --cuda  CUDA version tag for PyTorch wheels (default: cu126)
@@ -24,8 +24,27 @@ fi
 
 
 # Install uv:
-wget -qO- https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
+wget -qO- https://astral.sh/uv/install.sh | sh || {
+  echo "uv installer failed" >&2
+  exit 1
+}
+
+if ! command -v uv >/dev/null 2>&1; then
+  if [[ -n "${UV_INSTALL_DIR:-}" ]]; then
+    export PATH="$UV_INSTALL_DIR:$PATH"
+  elif [[ -n "${XDG_BIN_HOME:-}" ]]; then
+    export PATH="$XDG_BIN_HOME:$PATH"
+  elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    export PATH="$XDG_DATA_HOME/../bin:$PATH"
+  else
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+fi
+
+command -v uv >/dev/null 2>&1 || {
+  echo "uv install failed: executable not found in PATH" >&2
+  exit 1
+}
 
 # Install Rust (cargo) with auto-confirmation:
 wget -qO- https://sh.rustup.rs | sh -s -- -y
@@ -83,7 +102,7 @@ export PYO3_CROSS_PYTHON_VERSION="$PYTHON_VERSION" && cd external_tools/timelock
 # Build timelock Python package:
 cd external_tools/timelock/py && uv pip install --upgrade build && python3 -m build
 uv pip install timelock
-cd ../..
+cd ../../..
 
 # fix async-substrate-interface dependency issue
 uv pip uninstall scalecodec cyscale -y && uv pip install cyscale==0.5.0 --force-reinstall
