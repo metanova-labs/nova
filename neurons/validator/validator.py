@@ -339,70 +339,80 @@ async def main(config):
         bt.logging.info("Auto-updater disabled. Set AUTO_UPDATE=1 to enable.")
 
     # Main validator loop
-    last_logged_blocks_remaining = None
     while True:
         try:
-            metagraph, subtensor = await call_subtensor(
-                subtensor,
-                config.network,
-                lambda st: st.metagraph(config.netuid),
-            )
             current_block, subtensor = await call_subtensor(
                 subtensor,
                 config.network,
                 lambda st: st.get_current_block(),
+                #timeout_s=30,
             )
 
-            # Only wait for epoch boundary if not reading from local input
-            if local_input or current_block % config.epoch_length == 0:
-                # Epoch end - process and set weights
-                config.update(load_config())
-                epoch_result = await process_epoch(config, current_block, metagraph, subtensor)
-                winner_molecules = None
-                winner_nanobodies = None
-                if epoch_result is None:
-                    pass
-                else:
-                    winner_molecules, winner_nanobodies, uid_to_data = epoch_result
+            # Wait for the epoch-end block unless reading from local input.
+            if not local_input:
+                remainder = current_block % config.epoch_length
+                if remainder != 0:
+                    target_block = current_block + (config.epoch_length - remainder)
+                    bt.logging.info(
+                        f"Waiting for epoch to end... {target_block - current_block} blocks remaining "
+                        f"(until block {target_block})."
+                    )
+                    reached = await subtensor.wait_for_block(target_block)
+                    if not reached:
+                        bt.logging.warning(
+                            f"wait_for_block({target_block}) did not reach the target; reconnecting."
+                        )
+                        subtensor = await reconnect_subtensor(subtensor, config.network)
+                        await asyncio.sleep(1)
+                        continue
+                    current_block = target_block
 
-                current_epoch = (current_block // config.epoch_length) - 1
-                if not test_mode:
-                    payouts = await set_weights(winner_molecules, winner_nanobodies, config)
-                    if payouts:
-                        try:
-                            hotkey_payouts = []
-                            for component, uid, proportion in payouts:
-                                hotkey = uid_to_data.get(uid, {}).get("hotkey")
-                                if not hotkey:
-                                    bt.logging.error(
-                                        f"Missing hotkey for payout component={component} uid={uid}; skipping."
-                                    )
-                                    continue
-                                hotkey_payouts.append((component, hotkey, proportion))
+            metagraph, subtensor = await call_subtensor(
+                subtensor,
+                config.network,
+                lambda st: st.metagraph(config.netuid),
+                timeout_s=30,
+            )
 
-                            await dispatch_bounty_payouts(
-                                payouts=hotkey_payouts,
-                                subtensor=subtensor,
-                                config=config,
-                                epoch=current_epoch,
-                            )
-                        except Exception as e:
-                            bt.logging.error(f"Error dispatching bounty payouts: {e}")
-                            bt.logging.error(traceback.format_exc())
-                
-                # If using local input, exit after processing
-                if local_input:
-                    break
-                
+            # Epoch end - process and set weights
+            config.update(load_config())
+            epoch_result = await process_epoch(config, current_block, metagraph, subtensor)
+            winner_molecules = None
+            winner_nanobodies = None
+            if epoch_result is None:
+                pass
             else:
-                # Waiting for epoch
-                blocks_remaining = config.epoch_length - (current_block % config.epoch_length)
-                if (blocks_remaining % 5 == 0) and (blocks_remaining != last_logged_blocks_remaining):
-                    bt.logging.info(f"Waiting for epoch to end... {blocks_remaining} blocks remaining.")
-                    last_logged_blocks_remaining = blocks_remaining
-                await asyncio.sleep(1)
-                
- 
+                winner_molecules, winner_nanobodies, uid_to_data = epoch_result
+
+            current_epoch = (current_block // config.epoch_length) - 1
+            if not test_mode:
+                payouts = await set_weights(winner_molecules, winner_nanobodies, config)
+                if payouts:
+                    try:
+                        hotkey_payouts = []
+                        for component, uid, proportion in payouts:
+                            hotkey = uid_to_data.get(uid, {}).get("hotkey")
+                            if not hotkey:
+                                bt.logging.error(
+                                    f"Missing hotkey for payout component={component} uid={uid}; skipping."
+                                )
+                                continue
+                            hotkey_payouts.append((component, hotkey, proportion))
+
+                        await dispatch_bounty_payouts(
+                            payouts=hotkey_payouts,
+                            subtensor=subtensor,
+                            config=config,
+                            epoch=current_epoch,
+                        )
+                    except Exception as e:
+                        bt.logging.error(f"Error dispatching bounty payouts: {e}")
+                        bt.logging.error(traceback.format_exc())
+
+            # If using local input, exit after processing
+            if local_input:
+                break
+
         except asyncio.CancelledError:
             bt.logging.info("Resetting subtensor connection.")
             subtensor = await reconnect_subtensor(subtensor, config.network)
