@@ -20,6 +20,23 @@ from utils.stage_timer import stage
 ALLOWED_AAS = set("ACDEFGHIKLMNPQRSTVWY")
 HYDROPHOBIC = set("AILMFWV")
 
+def _is_tnp_compute_error(result) -> bool:
+    """Did the TNP profile fail to compute, as opposed to failing the criteria?
+
+    Prefers the explicit ``error`` flag the developability service sets for a
+    compute failure; falls back to the reason text so this behaves correctly
+    against a service that does not set it yet.
+    """
+    if result is None:
+        return True
+    get = result.get if hasattr(result, "get") else lambda k, d=None: getattr(result, k, d)
+    if get("passed"):
+        return False
+    if get("error"):
+        return True
+    return "Failed to compute TNP profile" in str(get("reason") or "")
+
+
 async def validate_nanobodies(
     uid_to_data: dict[int, dict[str, list]],
     score_dict: dict[int, dict[str, list[list[float]]]],
@@ -221,6 +238,41 @@ async def validate_nanobodies(
     except Exception as e:
         bt.logging.warning(f"Batch developability analysis failed: {e}")
         return {}
+
+    # A TNP profile that failed to COMPUTE is not a developability verdict.
+    # DevelopabilityService returns {"passed": False, "reason": "Failed to
+    # compute TNP profile..."} when compute_tnp_profile_async returns nothing,
+    # and the rejection below cannot tell that apart from a sequence that was
+    # measured and found undevelopable -- so a transient fault on the validator
+    # side drops a miner's whole submission for the epoch.
+    #
+    # The failures are transient, so retrying the affected sequences once
+    # recovers most of them without weakening the gate: anything still failing
+    # afterwards is rejected exactly as before.
+    errored = [
+        index for index, result in enumerate(all_dev_results)
+        if _is_tnp_compute_error(result)
+    ]
+    if errored:
+        bt.logging.warning(
+            f"developability: {len(errored)} of {len(all_dev_results)} sequence(s) "
+            f"failed to compute a TNP profile; retrying those"
+        )
+        try:
+            retry_results = await analyze_developability(
+                [all_dev_sequences[index] for index in errored]
+            )
+        except Exception as e:
+            bt.logging.warning(f"developability retry failed: {e}")
+            retry_results = []
+        recovered = 0
+        for index, result in zip(errored, retry_results):
+            if not _is_tnp_compute_error(result):
+                all_dev_results[index] = result
+                recovered += 1
+        bt.logging.warning(
+            f"developability: recovered {recovered} of {len(errored)} after retry"
+        )
 
     valid_nanobodies_by_uid = {}
     offset = 0
