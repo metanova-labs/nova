@@ -391,13 +391,15 @@ async def main(config):
                     try:
                         hotkey_payouts = []
                         for component, uid, proportion in payouts:
-                            hotkey = uid_to_data.get(uid, {}).get("hotkey")
-                            if not hotkey:
+                            submission = uid_to_data.get(uid, {})
+                            hotkey = submission.get("hotkey")
+                            submission_block = submission.get("block_submitted")
+                            if not hotkey or submission_block is None:
                                 bt.logging.error(
-                                    f"Missing hotkey for payout component={component} uid={uid}; skipping."
+                                    f"Missing submission identity for payout component={component} uid={uid}; skipping."
                                 )
                                 continue
-                            hotkey_payouts.append((component, hotkey, proportion))
+                            hotkey_payouts.append((component, hotkey, submission_block, proportion))
 
                         await dispatch_bounty_payouts(
                             payouts=hotkey_payouts,

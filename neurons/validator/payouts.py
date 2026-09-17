@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -11,12 +12,12 @@ EXPECTED_PAYOUT_STATUSES = {"already_processing", "idempotency_conflict"}
 
 
 async def dispatch_bounty_payouts(
-    payouts: list[tuple[str, str, float]],
+    payouts: list[tuple[str, str, int, float]],
     subtensor,
     config,
     epoch: int,
 ) -> None:
-    """POST up to one compound payout request per epoch component."""
+    """Pay the winning hotkey's owner at its recorded commitment block."""
     if not payouts:
         bt.logging.info("No payouts to dispatch this epoch.")
         return
@@ -39,10 +40,10 @@ async def dispatch_bounty_payouts(
 
     timeout = aiohttp.ClientTimeout(total=COMPOUND_PAYOUT_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        for component, hotkey, proportion in payouts:
-            coldkey = await _resolve_hotkey_owner(subtensor, hotkey)
-            if not coldkey:
-                bt.logging.error(f"Unable to resolve coldkey owner for payout component={component} hotkey={hotkey}.")
+        for component, hotkey, submission_block, proportion in payouts:
+            coldkey = await _resolve_hotkey_owner(subtensor, hotkey, submission_block)
+            if not coldkey or coldkey == "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM":
+                bt.logging.error(f"Missing submission-time coldkey for payout epoch={epoch} component={component}.")
                 continue
 
             body = {
@@ -97,22 +98,19 @@ async def _post_payout(session, headers, body, epoch, component, coldkey):
     log(f"{prefix} epoch={epoch} component={component} coldkey={coldkey} status={status} detail={detail}")
 
 
-async def _resolve_hotkey_owner(subtensor, hotkey: str) -> str | None:
-    try:
-        owner = await subtensor.substrate.query(
-            module="SubtensorModule",
-            storage_function="Owner",
-            params=[hotkey],
-        )
-    except Exception as e:
-        bt.logging.warning(f"Error resolving hotkey owner for hotkey={hotkey}: {e}")
-        return None
-
-    if hasattr(owner, "value"):
-        owner = owner.value
-
-    owner = str(owner) if owner else None
-    if owner == "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM":
-        return None
-
-    return owner
+async def _resolve_hotkey_owner(subtensor, hotkey: str, submission_block: int) -> str | None:
+    if submission_block is None:
+        return None  # Never fall back to the current owner.
+    for attempt in range(3):
+        try:
+            return await asyncio.wait_for(
+                subtensor.get_hotkey_owner(hotkey, block=submission_block), timeout=10,
+            )
+        except Exception as e:
+            bt.logging.warning(
+                f"Owner lookup failed hotkey={hotkey} block={submission_block} "
+                f"attempt={attempt + 1} error_type={type(e).__name__}"
+            )
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+    return None
