@@ -2,7 +2,6 @@ import hashlib
 import asyncio
 import os
 import sys
-from tempfile import NamedTemporaryFile
 from typing import List, Dict, Any
 import pandas as pd
 from huggingface_hub import hf_hub_download
@@ -171,13 +170,15 @@ def index_top_sequences(target: str, n: int = 50) -> SearchEngine:
         # fallback to igblast if cdrs are not found by abnumber
         if cdrs is None:
             bt.logging.warning(f"Failed to extract CDRs for sequence {seq_id} using abnumber, falling back to igblast")
-            with NamedTemporaryFile(suffix=".fasta") as temp_file:
-                with open(temp_file.name, "w") as f:
-                    f.write(f">seq_{seq_id}\n{seq}")
-                features = compute_igblast_nativeness(temp_file.name)
-                #print(features)
-            cdrs = features_to_cdrs(features[0]['features'])
-            #print(f"CDRs found by igblast: {cdrs}")
+            try:
+                results = compute_igblast_nativeness({str(seq_id): seq})
+            except Exception as e:
+                bt.logging.warning(f"IgBLAST fallback failed for sequence {seq_id}: {e}")
+                continue
+            if not results:
+                bt.logging.warning(f"IgBLAST returned no result for sequence {seq_id}")
+                continue
+            cdrs = features_to_cdrs(results[0].features)
             if cdrs is None:
                 bt.logging.warning(f"Failed to extract CDRs for sequence {seq_id} using igblast")
                 continue
