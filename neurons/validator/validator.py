@@ -370,7 +370,7 @@ async def main(config):
             metagraph, subtensor = await call_subtensor(
                 subtensor,
                 config.network,
-                lambda st: st.metagraph(config.netuid, block=current_block),
+                lambda st: st.metagraph(config.netuid),
                 timeout_s=30,
             )
 
@@ -389,18 +389,21 @@ async def main(config):
                 payouts = await set_weights(winner_molecules, winner_nanobodies, config)
                 if payouts:
                     try:
-                        coldkey_payouts = []
+                        hotkey_payouts = []
                         for component, uid, proportion in payouts:
-                            coldkey = uid_to_data.get(uid, {}).get("coldkey")
-                            if not coldkey:
+                            submission = uid_to_data.get(uid, {})
+                            hotkey = submission.get("hotkey")
+                            submission_block = submission.get("block_submitted")
+                            if not hotkey or submission_block is None:
                                 bt.logging.error(
-                                    f"Missing epoch-end coldkey for payout component={component} uid={uid}; skipping."
+                                    f"Missing submission identity for payout component={component} uid={uid}; skipping."
                                 )
                                 continue
-                            coldkey_payouts.append((component, coldkey, proportion))
+                            hotkey_payouts.append((component, hotkey, submission_block, proportion))
 
                         await dispatch_bounty_payouts(
-                            payouts=coldkey_payouts,
+                            payouts=hotkey_payouts,
+                            subtensor=subtensor,
                             config=config,
                             epoch=current_epoch,
                         )

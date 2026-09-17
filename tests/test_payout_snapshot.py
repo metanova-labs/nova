@@ -13,8 +13,22 @@ OTHER_COLDKEY = "5GbfobwGAc7QQZzpUv9UCtbKktW7cfXww9sskRY3qNGutw5N"
 
 
 class PayoutSnapshotTests(unittest.IsolatedAsyncioTestCase):
-    async def snapshot(self):
-        metagraph = SimpleNamespace(hotkeys=[HOTKEY], coldkeys=[COLDKEY])
+    async def dispatch(self, owner, submission_block=110, hotkey=HOTKEY):
+        session = Mock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        with patch.dict(os.environ, {"WALLET_TRANSFER_API_KEY": secrets.token_urlsafe(24)}, clear=True), \
+                patch.object(payouts.aiohttp, "ClientSession", return_value=session), \
+                patch.object(payouts, "_post_payout", new_callable=AsyncMock) as post:
+            await payouts.dispatch_bounty_payouts(
+                [("nanobody", hotkey, submission_block, 0.4)],
+                SimpleNamespace(get_hotkey_owner=owner),
+                SimpleNamespace(emission_override_enabled=True), 25172,
+            )
+        return post
+
+    async def test_submission_block_owner_wins_over_epoch_end_and_current_owner(self):
+        metagraph = SimpleNamespace(hotkeys=[HOTKEY], coldkeys=[OTHER_COLDKEY])
         query = AsyncMock(return_value=SimpleNamespace(value={"block": 110}))
         subtensor = SimpleNamespace(substrate=SimpleNamespace(query=query),
                                     determine_block_hash=AsyncMock(return_value="epoch-end-hash"))
@@ -25,48 +39,42 @@ class PayoutSnapshotTests(unittest.IsolatedAsyncioTestCase):
             data, *_ = await commitments.gather_and_decrypt_commitments(
                 subtensor, metagraph, 68, 100, 120, config, {}, None,
             )
-        return data[0], metagraph, query
-
-    async def test_submission_carries_epoch_end_owner_and_block(self):
-        winner, _, query = await self.snapshot()
+        winner = data[0]
         self.assertEqual(winner["hotkey"], HOTKEY)
-        self.assertEqual(winner["coldkey"], COLDKEY)
-        self.assertEqual(winner["ownership_block_hash"], "epoch-end-hash")
-        self.assertEqual(query.await_args.kwargs["block_hash"], "epoch-end-hash")
+        metagraph.hotkeys[0] = OTHER_COLDKEY  # The UID has since been recycled.
+        owner = AsyncMock(side_effect=lambda hotkey, block=None:
+                          COLDKEY if hotkey == HOTKEY and block == 110 else OTHER_COLDKEY)
+        post = await self.dispatch(owner, winner["block_submitted"], winner["hotkey"])
+        owner.assert_awaited_once_with(HOTKEY, block=110)
+        self.assertEqual(post.await_args.args[2]["destination_coldkey"], COLDKEY)
 
-    async def test_later_ownership_and_uid_changes_do_not_redirect_payout(self):
-        winner, metagraph, query = await self.snapshot()
-        metagraph.hotkeys[0] = OTHER_COLDKEY
-        metagraph.coldkeys[0] = OTHER_COLDKEY
-        session = Mock()
-        session.__aenter__ = AsyncMock(return_value=session)
-        session.__aexit__ = AsyncMock(return_value=False)
-        with patch.dict(os.environ, {"WALLET_TRANSFER_API_KEY": secrets.token_urlsafe(24)}, clear=True), \
-                patch.object(payouts.aiohttp, "ClientSession", return_value=session), \
-                patch.object(payouts, "_post_payout", new_callable=AsyncMock) as post:
-            await payouts.dispatch_bounty_payouts(
-                [("nanobody", winner["coldkey"], 0.4)],
-                SimpleNamespace(emission_override_enabled=True), 25172,
-            )
+    async def test_transient_error_retries_the_same_submission_block(self):
+        owner = AsyncMock(side_effect=[RuntimeError("RPC unavailable"), COLDKEY])
+        with patch.object(payouts.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+            post = await self.dispatch(owner)
+        sleep.assert_awaited_once_with(1)
+        self.assertEqual(owner.await_count, 2)
+        self.assertTrue(all(a.kwargs == {"block": 110} for a in owner.await_args_list))
         self.assertEqual(post.await_count, 1)
-        self.assertEqual(post.await_args.args[2], {
-            "component": "nanobody", "destination_coldkey": COLDKEY,
-            "epoch": 25172, "incentive_proportion": 0.4,
-        })
-        self.assertEqual(query.await_count, 1)  # Only commitment retrieval; no payout Owner RPC.
+        self.assertEqual(post.await_args.args[2]["destination_coldkey"], COLDKEY)
 
-    async def test_missing_snapshot_owner_does_not_send(self):
-        session = Mock()
-        session.__aenter__ = AsyncMock(return_value=session)
-        session.__aexit__ = AsyncMock(return_value=False)
-        with patch.dict(os.environ, {"WALLET_TRANSFER_API_KEY": secrets.token_urlsafe(24)}, clear=True), \
-                patch.object(payouts.aiohttp, "ClientSession", return_value=session), \
-                patch.object(payouts, "_post_payout", new_callable=AsyncMock) as post:
-            for coldkey in (None, "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"):
-                await payouts.dispatch_bounty_payouts(
-                    [("nanobody", coldkey, 0.4)], SimpleNamespace(emission_override_enabled=True), 25172,
-                )
+    async def test_exhausted_retries_never_pay_a_current_owner(self):
+        owner = AsyncMock(side_effect=RuntimeError("RPC unavailable"))
+        with patch.object(payouts.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+            post = await self.dispatch(owner)
+        self.assertEqual([a.args[0] for a in sleep.await_args_list], [1, 2])
+        self.assertEqual(owner.await_count, 3)
+        self.assertTrue(all(a.kwargs == {"block": 110} for a in owner.await_args_list))
         post.assert_not_awaited()
+
+    async def test_missing_block_or_null_owner_does_not_send(self):
+        for block, coldkey in [(None, COLDKEY), (110, None),
+                               (110, "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM")]:
+            owner = AsyncMock(return_value=coldkey)
+            post = await self.dispatch(owner, block)
+            post.assert_not_awaited()
+            if block is None:
+                owner.assert_not_awaited()
 
 
 if __name__ == "__main__":
