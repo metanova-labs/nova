@@ -12,11 +12,10 @@ EXPECTED_PAYOUT_STATUSES = {"already_processing", "idempotency_conflict"}
 
 async def dispatch_bounty_payouts(
     payouts: list[tuple[str, str, float]],
-    subtensor,
     config,
     epoch: int,
 ) -> None:
-    """POST up to one compound payout request per epoch component."""
+    """Pay coldkeys captured at epoch-end, independent of later ownership changes."""
     if not payouts:
         bt.logging.info("No payouts to dispatch this epoch.")
         return
@@ -39,10 +38,9 @@ async def dispatch_bounty_payouts(
 
     timeout = aiohttp.ClientTimeout(total=COMPOUND_PAYOUT_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        for component, hotkey, proportion in payouts:
-            coldkey = await _resolve_hotkey_owner(subtensor, hotkey)
-            if not coldkey:
-                bt.logging.error(f"Unable to resolve coldkey owner for payout component={component} hotkey={hotkey}.")
+        for component, coldkey, proportion in payouts:
+            if not coldkey or coldkey == "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM":
+                bt.logging.error(f"Missing epoch-end coldkey for payout epoch={epoch} component={component}.")
                 continue
 
             body = {
@@ -95,24 +93,3 @@ async def _post_payout(session, headers, body, epoch, component, coldkey):
     log = bt.logging.warning if status in EXPECTED_PAYOUT_STATUSES else bt.logging.error
     prefix = "Payout skipped" if status in EXPECTED_PAYOUT_STATUSES else "Payout failed"
     log(f"{prefix} epoch={epoch} component={component} coldkey={coldkey} status={status} detail={detail}")
-
-
-async def _resolve_hotkey_owner(subtensor, hotkey: str) -> str | None:
-    try:
-        owner = await subtensor.substrate.query(
-            module="SubtensorModule",
-            storage_function="Owner",
-            params=[hotkey],
-        )
-    except Exception as e:
-        bt.logging.warning(f"Error resolving hotkey owner for hotkey={hotkey}: {e}")
-        return None
-
-    if hasattr(owner, "value"):
-        owner = owner.value
-
-    owner = str(owner) if owner else None
-    if owner == "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM":
-        return None
-
-    return owner

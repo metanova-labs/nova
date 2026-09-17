@@ -102,6 +102,7 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, mi
                 result[hotkey] = SimpleNamespace(
                     uid=uid,
                     hotkey=hotkey,
+                    coldkey=metagraph.coldkeys[uid],
                     block=commit['block'],
                     data=decode_metadata(commit)
                 )
@@ -351,6 +352,8 @@ async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_blo
                 "block_submitted": commit.block,
                 "push_time": push_timestamps.get(uid, ''),
                 "hotkey": commit.hotkey,
+                "coldkey": commit.coldkey,
+                "ownership_block_hash": current_block_hash,
             }
 
     return uid_to_data, current_commitments, decrypted_submissions, push_timestamps
