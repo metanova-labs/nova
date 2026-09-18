@@ -47,7 +47,7 @@ def upload_file_to_github(filename: str, encoded_content: str):
         return False
 
 
-async def read_local_input_file(file_path, config, subtensor):
+async def read_local_input_file(file_path, config, chain):
     """
     Loads input data from a local file for testing purposes.
     Expected format:
@@ -58,7 +58,7 @@ async def read_local_input_file(file_path, config, subtensor):
         bt.logging.error(f"Local input file not found: {file_path}")
         return None
 
-    current_block = await subtensor.get_current_block()
+    current_block = await chain.call(lambda st: st.get_current_block())
     uid_to_data = {}
     
     with open(file_path, 'r') as file:

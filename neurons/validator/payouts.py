@@ -12,7 +12,7 @@ EXPECTED_PAYOUT_STATUSES = {"already_processing", "idempotency_conflict"}
 
 async def dispatch_bounty_payouts(
     payouts: list[tuple[str, str, float]],
-    subtensor,
+    chain,
     config,
     epoch: int,
 ) -> None:
@@ -40,7 +40,7 @@ async def dispatch_bounty_payouts(
     timeout = aiohttp.ClientTimeout(total=COMPOUND_PAYOUT_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for component, hotkey, proportion in payouts:
-            coldkey = await _resolve_hotkey_owner(subtensor, hotkey)
+            coldkey = await _resolve_hotkey_owner(chain, hotkey)
             if not coldkey:
                 bt.logging.error(f"Unable to resolve coldkey owner for payout component={component} hotkey={hotkey}.")
                 continue
@@ -97,12 +97,15 @@ async def _post_payout(session, headers, body, epoch, component, coldkey):
     log(f"{prefix} epoch={epoch} component={component} coldkey={coldkey} status={status} detail={detail}")
 
 
-async def _resolve_hotkey_owner(subtensor, hotkey: str) -> str | None:
+async def _resolve_hotkey_owner(chain, hotkey: str) -> str | None:
     try:
-        owner = await subtensor.substrate.query(
-            module="SubtensorModule",
-            storage_function="Owner",
-            params=[hotkey],
+        owner = await chain.call(
+            lambda st: st.substrate.query(
+                module="SubtensorModule",
+                storage_function="Owner",
+                params=[hotkey],
+            ),
+            timeout_s=30,
         )
     except Exception as e:
         bt.logging.warning(f"Error resolving hotkey owner for hotkey={hotkey}: {e}")

@@ -69,14 +69,9 @@ def parse_decrypted_submission(
 
     return mols, seqs
 
-async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, min_block: int, max_block: int) -> dict:
+async def get_commitments(chain, metagraph, block_hash: str, netuid: int, min_block: int, max_block: int) -> dict:
     """
     Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
-
-    Args:
-        subtensor: The subtensor client object.
-        netuid (int): The network ID.
-        block (int, optional): The block number to query. Defaults to None.
 
     Returns:
         dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
@@ -84,14 +79,17 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int, mi
     """
 
     # Gather commitment queries for all hotkeys concurrently.
-    commits = await asyncio.gather(*[
-        subtensor.substrate.query(
-            module="Commitments",
-            storage_function="CommitmentOf",
-            params=[netuid, hotkey],
-            block_hash=block_hash,
-        ) for hotkey in metagraph.hotkeys
-    ])
+    commits = await chain.call(
+        lambda st: asyncio.gather(*[
+            st.substrate.query(
+                module="Commitments",
+                storage_function="CommitmentOf",
+                params=[netuid, hotkey],
+                block_hash=block_hash,
+            ) for hotkey in metagraph.hotkeys
+        ]),
+        timeout_s=30,
+    )
 
     # Process the results and build a dictionary with additional metadata.
     result = {}
@@ -319,11 +317,11 @@ def decrypt_submissions(current_commitments: dict, github_headers: dict, btd, co
     bt.logging.info(f"GitHub: {len(file_paths)} paths → {len(decrypted_submissions)} decrypted")
     return decrypted_submissions, push_timestamps
 
-async def gather_and_decrypt_commitments(subtensor, metagraph, netuid, start_block, current_block, config, github_headers, btd):
+async def gather_and_decrypt_commitments(chain, metagraph, netuid, start_block, current_block, config, github_headers, btd):
     # Get commitments
-    current_block_hash = await subtensor.determine_block_hash(current_block)
+    current_block_hash = await chain.call(lambda st: st.determine_block_hash(current_block))
     current_commitments = await get_commitments(
-        subtensor, 
+        chain,
         metagraph, 
         current_block_hash, 
         netuid=netuid,
