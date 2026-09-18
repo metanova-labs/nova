@@ -32,7 +32,10 @@ def get_config():
     config.netuid = 68
     config.network = os.environ.get("SUBTENSOR_NETWORK")
     node = SubstrateInterface(url=config.network)
-    config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value + 1
+    try:
+        config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value + 1
+    finally:
+        node.close()
 
     # Load configuration options
     config.update(load_config())
@@ -50,12 +53,12 @@ def setup_logging(config):
     bt.logging.info(f"Running validator for subnet: {config.netuid} on network: {config.subtensor.network} with config:")
     bt.logging.info(config)
 
-async def check_registration(wallet, subtensor, netuid):
+async def check_registration(wallet, chain, netuid):
     """
     Confirm that the wallet hotkey is in the metagraph for the specified netuid.
     Logs an error and exits if it's not registered. Warns if stake is less than 1000.
     """
-    metagraph = await subtensor.metagraph(netuid=netuid)
+    metagraph = await chain.call(lambda st: st.metagraph(netuid=netuid), timeout_s=30)
     my_hotkey_ss58 = wallet.hotkey.ss58_address
 
     if my_hotkey_ss58 not in metagraph.hotkeys:

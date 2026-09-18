@@ -334,7 +334,7 @@ async def apply_external_scores(
     boltz: Optional[Any] = None,
     boltzgen: Optional[Any] = None,
     target_proteins: Optional[List[str]] = None,
-    subtensor: Optional[Any] = None,
+    chain: Optional[Any] = None,
     epoch_end_block: Optional[int] = None,
     finalization_buffer_blocks: int = FINALIZATION_BUFFER_BLOCKS,
     test_mode: bool = False,
@@ -463,7 +463,7 @@ async def apply_external_scores(
         total_validations = len(molecule_validations) + len(nanobody_validations)
 
         # --- Wait for other validators ---
-        if subtensor is not None and epoch_end_block is not None:
+        if chain is not None and epoch_end_block is not None:
             target_block = max(epoch_end_block - int(finalization_buffer_blocks), 0)
             bt.logging.info(
                 f"Submitted {total_validations} validation(s) to score-share API; "
@@ -471,7 +471,9 @@ async def apply_external_scores(
                 f"before retrieving averages"
             )
             try:
-                await subtensor.wait_for_block(target_block)
+                await chain.call(
+                    lambda st: st.wait_for_block(target_block), timeout_s=None
+                )
             except Exception as e:
                 bt.logging.warning(
                     f"Error while waiting for target block before score-share GET; using local scores. Error: {e}"
