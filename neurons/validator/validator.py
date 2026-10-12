@@ -21,6 +21,7 @@ from config.config_loader import load_config
 from utils import get_challenge_params_from_blockhash, inference, QuicknetBittensorDrandTimelock
 from utils.stage_timer import stage
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
+from neurons.validator import epoch_schedule
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
 from neurons.validator.molecule_validity import validate_molecules_and_calculate_entropy
@@ -338,6 +339,11 @@ async def main(config):
     else:
         bt.logging.info("Auto-updater disabled. Set AUTO_UPDATE=1 to enable.")
 
+    # Boundary block of the last epoch this process started scoring. A cycle that
+    # overruns the next boundary must score that epoch late, not skip it.
+    last_scored_boundary = None
+    late_start_grace = epoch_schedule.late_start_grace_blocks()
+
     # Main validator loop
     while True:
         try:
@@ -350,9 +356,18 @@ async def main(config):
 
             # Wait for the epoch-end block unless reading from local input.
             if not local_input:
-                remainder = current_block % config.epoch_length
-                if remainder != 0:
-                    target_block = current_block + (config.epoch_length - remainder)
+                action, target_block = epoch_schedule.next_action(
+                    current_block, config.epoch_length, last_scored_boundary, late_start_grace
+                )
+                if action == epoch_schedule.SCORE and target_block != current_block:
+                    # The previous cycle ran past this boundary. Score the epoch now
+                    # rather than waiting a whole epoch and skipping it.
+                    bt.logging.warning(
+                        f"Previous cycle overran the epoch boundary at block {target_block}; "
+                        f"scoring that epoch now, {current_block - target_block} blocks late."
+                    )
+                    current_block = target_block
+                elif action == epoch_schedule.WAIT:
                     bt.logging.info(
                         f"Waiting for epoch to end... {target_block - current_block} blocks remaining "
                         f"(until block {target_block})."
@@ -376,6 +391,7 @@ async def main(config):
 
             # Epoch end - process and set weights
             config.update(load_config())
+            last_scored_boundary = current_block
             epoch_result = await process_epoch(config, current_block, metagraph, subtensor)
             winner_molecules = None
             winner_nanobodies = None

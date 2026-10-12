@@ -109,6 +109,10 @@ SCORE_SHARE_API_URL="https://vali-score-share-api.metanova-labs.ai"
 
 # Auto-updater (optional)
 AUTO_UPDATE=1  # Enable automatic updates
+
+# Blocks (12 s each) a cycle may finish after an epoch boundary and still score that epoch immediately
+# instead of waiting a whole epoch and skipping it. Default 30; 0 restores the old behaviour.
+NOVA_LATE_START_GRACE_BLOCKS=30
 ```
 
 ### Command-Line Arguments
