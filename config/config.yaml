@@ -31,7 +31,7 @@ molecule_requirements:
   # molecule plausibility filters, see utils/filters.py
   filters:
     max_heavy_atoms: 50
-    min_heavy_atoms: 20
+    min_heavy_atoms: 10
     max_molecular_weight: 700
     min_molecular_weight: 100
     max_hbd: 5
