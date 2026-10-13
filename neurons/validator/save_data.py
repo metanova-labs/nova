@@ -53,6 +53,7 @@ def _to_json_safe(obj):
 def _build_competition_payload(config: dict, current_epoch: int) -> dict:
     epoch_number = current_epoch
     nanobody_proportion = config.get('nanobody_weight', 0.0)
+    filters = config.get('filters') or {}
     return {
         # competition configs
         "epoch_number": epoch_number,
@@ -62,9 +63,9 @@ def _build_competition_payload(config: dict, current_epoch: int) -> dict:
 
         # molecule-specific configs
         "num_molecules": getattr(config, 'num_molecules', 0),
-        "min_heavy_atoms": getattr(config, 'min_heavy_atoms', 0),
-        "min_rotatable_bonds": getattr(config, 'min_rotatable_bonds', 0),
-        "max_rotatable_bonds": getattr(config, 'max_rotatable_bonds', 0),
+        "min_heavy_atoms": filters.get('min_heavy_atoms', 0),
+        "min_rotatable_bonds": filters.get('min_rotatable_bonds', 0),
+        "max_rotatable_bonds": filters.get('max_rotatable_bonds', 0),
         "entropy_min_threshold": getattr(config, 'min_entropy', 0.0),
         "boltz_metric": getattr(config, 'combination_strategy', None),
 
