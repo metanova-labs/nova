@@ -14,8 +14,9 @@ def get_total_reactions() -> int:
         conn.close()
         return count
     except Exception as e:
-        bt.logging.warning(f"Could not query reaction count: {e}, defaulting to 5")
-        return 5
+        raise RuntimeError(
+            f"Could not query the combinatorial database reaction count: {e}"
+        ) from e
 
 
 def is_reaction_allowed(molecule: str, allowed_reaction: str = None) -> bool:

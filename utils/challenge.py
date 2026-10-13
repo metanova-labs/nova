@@ -81,6 +81,8 @@ def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: 
             total_reactions = get_total_reactions()
             allowed_option = seed % total_reactions
             result["allowed_reaction"] = f"rxn:{allowed_option + 1}"
+        except RuntimeError:
+            raise
         except Exception as e:
             bt.logging.warning(f"Failed to determine allowed reaction: {e}, defaulting to all reactions allowed")
 
