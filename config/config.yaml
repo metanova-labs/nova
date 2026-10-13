@@ -25,12 +25,49 @@ payout:
 # Molecular property requirements
 molecule_requirements:
   num_molecules: 20
-  min_heavy_atoms: 10
-  min_rotatable_bonds: 1
-  max_rotatable_bonds: 10
   min_entropy: 0.25 # minimum entropy required when num_molecules > 1
-  banned_atom_types: ["Se", "Na", "Fe", "Zn", "B", "Br", "Si"]
   max_similarity_to_historical: 0.5 # maximum similarity to historical submissions to be considered valid
+
+  # molecule plausibility filters, see utils/filters.py
+  filters:
+    max_heavy_atoms: 50
+    min_heavy_atoms: 20
+    max_molecular_weight: 700
+    min_molecular_weight: 100
+    max_hbd: 5
+    max_hba: 10
+    max_logp: 7.0
+    min_rotatable_bonds: 1
+    max_rotatable_bonds: 10
+    min_rings: 1
+    max_ring_size: 12
+    max_spiro_atoms: 2
+    max_aromatic_rings: 5
+    max_aliphatic_rings: 5
+    max_fsp3: 0.8
+    max_triple_bonds: 1
+    max_amide_bonds: 5
+    max_stereocenters: 6
+    max_halogens: 6
+    max_iodine: 1
+    max_bromine: 2
+    max_fluorine: 9
+    max_phosphorus: 2
+    max_nitrogen: 9
+    max_oxygen: 9
+    max_sulfur: 2
+    max_aromatic_nitrogen: 6
+    max_aromatic_carbon: 28
+    max_aromatic_fraction: 0.92
+    min_heteroatom_fraction: 0.05
+    max_heteroatom_fraction: 0.65
+    max_bertz_ct: 1950
+    max_kappa1: 35
+    max_kappa2: 17
+    max_kappa3: 12
+    max_nitrile: 2
+    max_hydroxyl: 5
+
 
 # Reaction filtering configuration
 reaction_filtering:
