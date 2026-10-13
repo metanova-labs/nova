@@ -10,7 +10,6 @@ import traceback
 import multiprocessing as mp
 import shutil
 from pathlib import Path
-import random
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(BASE_DIR)
@@ -20,6 +19,7 @@ from config.config_loader import load_config
 
 from utils import get_challenge_params_from_blockhash, inference, QuicknetBittensorDrandTimelock
 from utils.stage_timer import stage
+from neurons.validator.chain import ChainClient
 from neurons.validator.setup import get_config, setup_logging, check_registration, setup_github_auth
 from neurons.validator.weights import set_weights
 from neurons.validator.commitments import gather_and_decrypt_commitments
@@ -43,58 +43,7 @@ boltzgen = None
 btd = QuicknetBittensorDrandTimelock()
 GITHUB_HEADERS = {}
 
-async def connect_subtensor(network):
-    subtensor = bt.AsyncSubtensor(network=network)
-    await subtensor.initialize()
-    return subtensor
-
-async def connect_subtensor_with_backoff(
-    network,
-    initial_delay=2,
-    max_delay=60,
-    connect_timeout=30,
-):
-    delay = initial_delay
-    attempt = 1
-    while True:
-        try:
-            return await asyncio.wait_for(
-                connect_subtensor(network),
-                timeout=connect_timeout,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            wait_seconds = delay + random.uniform(0, delay * 0.2)
-            bt.logging.warning(
-                f"Subtensor connection attempt {attempt} failed: "
-                f"{type(e).__name__}: {e}. "
-                f"Retrying in {wait_seconds:.1f}s."
-            )
-            await asyncio.sleep(wait_seconds)
-            delay = min(delay * 2, max_delay)
-            attempt += 1
-
-async def reconnect_subtensor(subtensor, network):
-    if subtensor is not None:
-        try:
-            await subtensor.close()
-        except Exception as e:
-            bt.logging.warning(f"Failed to close old subtensor connection: {e}")
-            
-    return await connect_subtensor_with_backoff(network)
-
-async def call_subtensor(subtensor, network, rpc_fn, timeout_s=10):
-    try:
-        result = await asyncio.wait_for(rpc_fn(subtensor), timeout=timeout_s)
-        return result, subtensor
-    except Exception as e:
-        bt.logging.warning(f"Subtensor RPC reconnect triggered due to {type(e).__name__}: {e}")
-        subtensor = await reconnect_subtensor(subtensor, network)
-        result = await asyncio.wait_for(rpc_fn(subtensor), timeout=timeout_s)
-        return result, subtensor
-
-async def process_epoch(config, current_block, metagraph, subtensor):
+async def process_epoch(config, current_block, metagraph, chain):
     """
     Process a single epoch end-to-end.
     """
@@ -108,8 +57,7 @@ async def process_epoch(config, current_block, metagraph, subtensor):
                 shutil.rmtree(tmp_files_dir)
 
         start_block = current_block - config.epoch_length
-        start_block_hash = await subtensor.determine_block_hash(start_block)
-        final_block_hash = await subtensor.determine_block_hash(current_block)
+        start_block_hash = await chain.call(lambda st: st.determine_block_hash(start_block))
         current_epoch = (current_block // config.epoch_length) - 1
 
         bt.logging.info(f"Epoch {current_epoch} scoring started.")
@@ -137,11 +85,11 @@ async def process_epoch(config, current_block, metagraph, subtensor):
         if not config.local_input_file:
             with stage("gather_and_decrypt_commitments"):
                 uid_to_data, current_commitments, decrypted_submissions, push_timestamps = await gather_and_decrypt_commitments(
-                    subtensor, metagraph, config.netuid, start_block, current_block, config, GITHUB_HEADERS, btd
+                    chain, metagraph, config.netuid, start_block, current_block, config, GITHUB_HEADERS, btd
                 )
         else:
             from utils import read_local_input_file
-            uid_to_data = await read_local_input_file(config.local_input_file, config, subtensor)
+            uid_to_data = await read_local_input_file(config.local_input_file, config, chain)
 
         if not uid_to_data:
             bt.logging.info("No valid submissions found this epoch.")
@@ -197,7 +145,7 @@ async def process_epoch(config, current_block, metagraph, subtensor):
                 epoch=current_epoch,
                 boltz=boltz,
                 boltzgen=boltzgen,
-                subtensor=subtensor,
+                chain=chain,
                 epoch_end_block=current_block + config.epoch_length,
                 test_mode=test_mode,
                 target_proteins=small_molecule_target,
@@ -312,7 +260,7 @@ async def main(config):
     remote_weights = bool(getattr(config, 'remote_weights', False))
     
     # Initialize subtensor client
-    subtensor = await connect_subtensor_with_backoff(config.network)
+    chain = ChainClient(config.network)
     
     # Wallet + registration check (skipped in test mode)
     wallet = None
@@ -323,7 +271,7 @@ async def main(config):
     else:
         try:
             wallet = bt.Wallet(config=config)
-            await check_registration(wallet, subtensor, config.netuid)
+            await check_registration(wallet, chain, config.netuid)
         except Exception as e:
             bt.logging.error(f"Wallet/registration check failed: {e}")
             sys.exit(1)
@@ -341,12 +289,7 @@ async def main(config):
     # Main validator loop
     while True:
         try:
-            current_block, subtensor = await call_subtensor(
-                subtensor,
-                config.network,
-                lambda st: st.get_current_block(),
-                #timeout_s=30,
-            )
+            current_block = await chain.call(lambda st: st.get_current_block())
 
             # Wait for the epoch-end block unless reading from local input.
             if not local_input:
@@ -357,26 +300,25 @@ async def main(config):
                         f"Waiting for epoch to end... {target_block - current_block} blocks remaining "
                         f"(until block {target_block})."
                     )
-                    reached = await subtensor.wait_for_block(target_block)
+                    reached = await chain.call(
+                        lambda st: st.wait_for_block(target_block), timeout_s=None
+                    )
                     if not reached:
                         bt.logging.warning(
                             f"wait_for_block({target_block}) did not reach the target; reconnecting."
                         )
-                        subtensor = await reconnect_subtensor(subtensor, config.network)
+                        await chain.reconnect()
                         await asyncio.sleep(1)
                         continue
                     current_block = target_block
 
-            metagraph, subtensor = await call_subtensor(
-                subtensor,
-                config.network,
-                lambda st: st.metagraph(config.netuid),
-                timeout_s=30,
+            metagraph = await chain.call(
+                lambda st: st.metagraph(config.netuid), timeout_s=30
             )
 
             # Epoch end - process and set weights
             config.update(load_config())
-            epoch_result = await process_epoch(config, current_block, metagraph, subtensor)
+            epoch_result = await process_epoch(config, current_block, metagraph, chain)
             winner_molecules = None
             winner_nanobodies = None
             if epoch_result is None:
@@ -401,7 +343,7 @@ async def main(config):
 
                         await dispatch_bounty_payouts(
                             payouts=hotkey_payouts,
-                            subtensor=subtensor,
+                            chain=chain,
                             config=config,
                             epoch=current_epoch,
                         )
@@ -415,12 +357,12 @@ async def main(config):
 
         except asyncio.CancelledError:
             bt.logging.info("Resetting subtensor connection.")
-            subtensor = await reconnect_subtensor(subtensor, config.network)
+            await chain.reconnect()
             await asyncio.sleep(1)
             continue
         except Exception as e:
             bt.logging.error(f"Error in main loop: {e}")
-            subtensor = await reconnect_subtensor(subtensor, config.network)
+            await chain.reconnect()
             await asyncio.sleep(3)
 
 if __name__ == "__main__":
