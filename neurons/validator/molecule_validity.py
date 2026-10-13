@@ -2,19 +2,18 @@ import os
 
 import bittensor as bt
 from rdkit import Chem, DataStructs
-from rdkit.Chem import Descriptors, rdFingerprintGenerator, FilterCatalog
+from rdkit.Chem import rdFingerprintGenerator
 
 from utils import (
     get_smiles, 
-    get_heavy_atom_count, 
     compute_fingerprint_entropy,
     entry_unique_for_protein_hf,
     find_chemically_identical,
     is_reaction_allowed,
-    contains_atom_type,
     get_historical_submissions,
     is_boltz_safe_smiles
 )
+from utils.filters import check as check_filters, validate_thresholds
 
 
 def validate_molecules_and_calculate_entropy(
@@ -37,10 +36,7 @@ def validate_molecules_and_calculate_entropy(
         Dictionary mapping UIDs to their list of valid SMILES strings
     """
 
-    # build BRENK filter (once per epoch)
-    filter_params = FilterCatalog.FilterCatalogParams()
-    filter_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.BRENK)
-    brenk_catalog = FilterCatalog.FilterCatalog(filter_params)
+    filter_thresholds = validate_thresholds(config.get('filters'))
     
     # index historical submissions by target (once per epoch)
     historical_submissions = {target: get_historical_submissions(target, 'molecules') for target in config['small_molecule_target']}
@@ -102,26 +98,15 @@ def validate_molecules_and_calculate_entropy(
                     bt.logging.warning(f"UID={uid}: no valid SMILES found for molecule='{molecule}'")
                     break
                 
-                if get_heavy_atom_count(smiles) < config['min_heavy_atoms']:
-                    bt.logging.warning(f"UID={uid}: molecule='{molecule}' has insufficient heavy atoms")
-                    break
-
                 try:
                     mol = Chem.MolFromSmiles(smiles)
-
-                    if brenk_catalog.HasMatch(mol):
-                        brenk_reasons = [e.GetDescription() for e in brenk_catalog.GetMatches(mol)]
-                        if brenk_reasons:
-                            bt.logging.warning(f"UID={uid}: molecule='{molecule}' is disallowed by BRENK: {'; '.join(brenk_reasons)}")
-                            break
-
-                    if contains_atom_type(mol, config['banned_atom_types']):
-                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' contains banned atom types")
+                    if mol is None:
+                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not parseable by RDKit")
                         break
 
-                    num_rotatable_bonds = Descriptors.NumRotatableBonds(mol)
-                    if num_rotatable_bonds < config['min_rotatable_bonds'] or num_rotatable_bonds > config['max_rotatable_bonds']:
-                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' has an invalid number of rotatable bonds")
+                    failures = check_filters(mol, filter_thresholds)
+                    if failures:
+                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' rejected: {failures[0]}")
                         break
                 except Exception as e:
                     bt.logging.warning(f"UID={uid}: molecule='{molecule}' is not parseable by RDKit: {e}")

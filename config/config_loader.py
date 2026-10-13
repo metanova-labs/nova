@@ -29,12 +29,9 @@ def load_config(path: str = "config/config.yaml"):
     emission_override_enabled = payout_config.get("enabled", False)
 
     molecule_config = config["molecule_requirements"]
-    min_heavy_atoms = molecule_config["min_heavy_atoms"]
-    min_rotatable_bonds = molecule_config["min_rotatable_bonds"]
-    max_rotatable_bonds = molecule_config["max_rotatable_bonds"]
     num_molecules = molecule_config["num_molecules"]
     min_entropy = molecule_config["min_entropy"]
-    banned_atom_types = molecule_config["banned_atom_types"]
+    filters = molecule_config["filters"]
     max_similarity_to_historical = molecule_config["max_similarity_to_historical"]
 
     boltz_config = config["boltz2_config"]
@@ -83,10 +80,7 @@ def load_config(path: str = "config/config.yaml"):
         'nanobody_weight': nanobody_weight,
         'emission_override_uid': emission_override_uid,
         'emission_override_enabled': emission_override_enabled,
-        'min_heavy_atoms': min_heavy_atoms,
-        'min_rotatable_bonds': min_rotatable_bonds,
-        'max_rotatable_bonds': max_rotatable_bonds,
-        'banned_atom_types': banned_atom_types,
+        'filters': filters,
         'num_molecules': num_molecules,
         'min_entropy': min_entropy,
         'random_valid_reaction': random_valid_reaction,

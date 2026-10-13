@@ -83,11 +83,11 @@ Implemented in `neurons/validator/molecule_validity.validate_molecules_and_calcu
 4. **SMILES**  
    For each molecule, the validator derives SMILES via `get_smiles(molecule)`. If no valid SMILES is found for any molecule, the whole submission is invalid.
 
-5. **Heavy atom count**  
-   `get_heavy_atom_count(smiles)` must be ≥ `config['min_heavy_atoms']` (e.g. 10). Otherwise invalid.
+5. **Molecular property filters**  
+   The parsed molecule must pass every filter in `utils/filters.py`, with thresholds from `molecule_requirements.filters` in `config/config.yaml`: heavy atoms 20-50, MW 100-700, HBD <= 5, HBA <= 10, logP <= 7, rotatable bonds 1-10, at least one ring, no macrocycles, element and functional-group limits (e.g. up to 2 Br; no metals, B, Si, Se, azide, isocyanide or allene), and shape/complexity limits. The first failing filter rejects the submission.
 
-6. **Rotatable bonds**  
-   RDKit is used to compute rotatable bonds. Count must be between `config['min_rotatable_bonds']` and `config['max_rotatable_bonds']` (e.g. 1–10). Unparseable or out-of-range → invalid.
+6. **Boltz-safe SMILES**  
+   `is_boltz_safe_smiles(smiles)` must pass.
 
 7. **Uniqueness per target**  
    For each `target` in `config['small_molecule_target']`, the molecule must be unique for that protein (checked via `entry_unique_for_protein_hf(target, smiles, 'molecules')`). If any molecule is not unique for any target, validation fails.
@@ -98,7 +98,7 @@ Implemented in `neurons/validator/molecule_validity.validate_molecules_and_calcu
 If all checks pass, the validator stores valid molecules for that UID and may compute **fingerprint entropy** when `num_molecules > 1`; entropy is currently a minimum value that needs to be obtained.
 
 **Takeaway for miners:**  
-Submit exactly the number of molecules required; ensure correct reaction type when filtering is on; ensure SMILES are valid, heavy-atom and rotatable-bond counts are in range, and molecules are unique per target and not chemically duplicated.
+Submit exactly the number of molecules required; ensure correct reaction type when filtering is on; ensure SMILES are valid and pass the property filters, and molecules are unique per target and not chemically duplicated.
 
 ---
 
@@ -164,7 +164,7 @@ From `config/config.yaml` and `config_loader.py`:
 |-----------|--------|--------|
 | `small_molecule_target`, `nanobody_target` | Challenge + validity | Target proteins for the epoch and uniqueness checks. |
 | `random_valid_reaction`, `allowed_reaction` | Molecule validity | When true, only molecules with the epoch’s allowed reaction type are valid. |
-| `min_heavy_atoms`, `min_rotatable_bonds`, `max_rotatable_bonds` | Molecule validity | RDKit-based filters. |
+| `filters` | Molecule validity | RDKit property filter thresholds (see `utils/filters.py`). |
 | `num_molecules`, `num_sequences` | Format + scoring | How many molecules/sequences to send and to score. |
 | `min_sequence_length`, `max_sequence_length` | Nanobody validity | Allowed nanobody length range. |
 | `min_cysteines`, `cys_pair_*`, `max_homopolymer_run`, `max_di_repeat_pairs` | Nanobody validity | Structural/diversity constraints. |
