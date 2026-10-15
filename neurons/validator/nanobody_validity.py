@@ -231,6 +231,8 @@ async def validate_nanobodies(
         seqs = info["sequences"]
         uid_seq_counts.append((uid, len(seqs)))
         all_dev_sequences.extend(seqs)
+        for h, sequence in zip(info["hashes"], seqs):
+            bt.logging.warning(f"TNP_SUBMISSION uid={uid} sequence_sha256={h} sequence_length={len(sequence)}")
 
     try:
         with stage("developability_tnp", n=len(all_dev_sequences)):
@@ -246,9 +248,9 @@ async def validate_nanobodies(
     # measured and found undevelopable -- so a transient fault on the validator
     # side drops a miner's whole submission for the epoch.
     #
-    # The failures are transient, so retrying the affected sequences once
-    # recovers most of them without weakening the gate: anything still failing
-    # afterwards is rejected exactly as before.
+    # Some compute failures are transient. Retry the affected sequences once
+    # without weakening the gate; retries are a mitigation, not proof of the
+    # underlying cause, and persistent failures remain rejected.
     errored = [
         index for index, result in enumerate(all_dev_results)
         if _is_tnp_compute_error(result)
@@ -282,6 +284,15 @@ async def validate_nanobodies(
         offset += count
 
         bt.logging.debug(f"UID {uid}: developability results: {developability_result}")
+        if len(developability_result) != count:
+            bt.logging.warning(f"UID {uid}: missing TNP results; compute failure, rejecting")
+            continue
+        failed_profiles = [h for h, result in zip(info["hashes"], developability_result)
+                           if _is_tnp_compute_error(result)]
+        if failed_profiles:
+            bt.logging.warning(f"UID {uid}: TNP compute failure after retry; "
+                               f"sequence_sha256={failed_profiles}; rejecting without a developability verdict")
+            continue
         rejected_sequences = [seq for seq, result in zip(info["sequences"], developability_result) if not result["passed"]]
         if rejected_sequences:
             bt.logging.warning(f"UID {uid}: contains sequences that are not developable: {rejected_sequences}")

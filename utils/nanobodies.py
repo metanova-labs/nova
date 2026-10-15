@@ -1,4 +1,5 @@
 import hashlib
+import json
 import asyncio
 import os
 import sys
@@ -23,6 +24,7 @@ from metanano.utils.igblast_nativeness import features_to_cdrs
 from utils.constants import ALLOWED_AAS, HYDROPHOBIC
 from utils.minmax_weighted_rank import rank_binders
 from utils.challenge import get_historical_submissions
+from utils.tnp_diagnostics import install_tnp_diagnostic_bridge, runtime_diagnostic
 
 def normalize_seq(seq: str) -> str:
     return seq.strip().upper()
@@ -109,6 +111,7 @@ def looks_like_signal_peptide(seq: str, window: int, hydro_min: int, scan_prefix
 async def analyze_developability(seqs: List[str]) -> bool:
     from metanano.services.async_manager import AsyncServiceManager
     from metanano.services.developability_service import DevelopabilityService
+    install_tnp_diagnostic_bridge(bt.logging.warning)
     config = Config()
 
     # TNP concurrency. DevelopabilityService otherwise falls back to the global
@@ -118,6 +121,10 @@ async def analyze_developability(seqs: List[str]) -> bool:
     manager = AsyncServiceManager(config.async_config)
 
     developability_service = DevelopabilityService(config.developability, manager)
+    bt.logging.warning("TNP_RUNTIME " + json.dumps(runtime_diagnostic(
+        NOVA_DIR, developability_service, config.async_config.max_concurrent_tnp,
+        manager.task_timeout,
+    ), sort_keys=True))
     result = await developability_service.analyze_batch_async(seqs)
     #bt.logging.info(f"Developability analysis result: {result}")
     return result
