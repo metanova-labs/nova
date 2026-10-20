@@ -50,7 +50,12 @@ def _to_json_safe(obj):
         return str(obj)
 
 
-def _build_competition_payload(config: dict, current_epoch: int) -> dict:
+def _build_competition_payload(
+    config: dict,
+    current_epoch: int,
+    allowed_v: str | None = None,
+    allowed_cdr3_length: int | None = None,
+) -> dict:
     epoch_number = current_epoch
     nanobody_proportion = config.get('nanobody_weight', 0.0)
     filters = config.get('filters') or {}
@@ -73,19 +78,20 @@ def _build_competition_payload(config: dict, current_epoch: int) -> dict:
         "num_sequences": getattr(config, 'num_sequences', 0),
         "min_sequence_length": getattr(config, 'min_sequence_length', 0),
         "max_sequence_length": getattr(config, 'max_sequence_length', 0),
-        "min_cysteines": getattr(config, 'min_cysteines', 0),
-        "cys_pair_min_separation": getattr(config, 'cys_pair_min_separation', 0),
-        "cys_pair_max_separation": getattr(config, 'cys_pair_max_separation', 0),
         "max_homopolymer_run": getattr(config, 'max_homopolymer_run', 0),
         "max_di_repeat_pairs": getattr(config, 'max_di_repeat_pairs', 0),
         "reject_signal_peptides": getattr(config, 'reject_signal_peptides', False),
         "sp_window": getattr(config, 'sp_window', 0),
         "sp_hydro_min_in_window": getattr(config, 'sp_hydro_min_in_window', 0),
         "sp_scan_prefix": getattr(config, 'sp_scan_prefix', 0),
-        "min_nativeness_score": getattr(config, 'min_nativeness_score', 0.0),
-        "min_human_framework_score": getattr(config, 'min_human_framework_score', 0.0),
         "max_similarity_score": getattr(config, 'max_similarity_score', 0.0),
         "num_top_sequences": getattr(config, 'num_top_sequences', 0),
+        "enforce_vhh_hallmarks": getattr(config, 'enforce_vhh_hallmarks', False),
+        "psh_strict_rejection_threshold": getattr(config, 'psh_strict_rejection_threshold', None),
+        "min_human_v_identity": getattr(config, 'min_human_v_identity', None),
+        "min_human_j_identity": getattr(config, 'min_human_j_identity', None),
+        "allowed_v": allowed_v,
+        "allowed_cdr3_length": allowed_cdr3_length,
     }
 
 
@@ -192,6 +198,46 @@ def _build_molecule_details(
 # Nanobody helpers
 # ---------------------------------------------------------------------------
 
+def _germline_locus(locus: dict | None) -> dict | None:
+    if not isinstance(locus, dict):
+        return None
+    return {
+        "identity_pct": locus.get("identity_pct"),
+        "identity_fraction": locus.get("identity_fraction"),
+        "genes": locus.get("genes"),
+        "alleles": locus.get("alleles"),
+        "reference_count": locus.get("reference_count"),
+        "hits": _to_json_safe(locus.get("hits")),
+    }
+
+
+def _germline_payload(result: dict | None) -> dict | None:
+    if not isinstance(result, dict):
+        return None
+    return {
+        "method": result.get("method"),
+        "species": result.get("species"),
+        "reference_sha256": result.get("reference_sha256"),
+        "hmm_sha256": result.get("hmm_sha256"),
+        "alignment_model": result.get("alignment_model"),
+        "V": _germline_locus(result.get("V")),
+        "J": _germline_locus(result.get("J")),
+    }
+
+
+def _regions_payload(regions: dict | None) -> dict | None:
+    if not isinstance(regions, dict):
+        return None
+    return {
+        "cdr1": regions.get("cdr1") or "",
+        "cdr2": regions.get("cdr2") or "",
+        "cdr3": regions.get("cdr3") or "",
+        "fr1": regions.get("fr1") or "",
+        "fr2": regions.get("fr2") or "",
+        "fr3": regions.get("fr3") or "",
+    }
+
+
 def _build_nanobody_details(
     uid: int,
     sequences_list: list[str],
@@ -205,13 +251,15 @@ def _build_nanobody_details(
 
     Each nanobody yields ONE entry containing:
       - target_scores: dict[protein_name -> per-target structural metrics]
-      - developability, nativeness, similarity: target-invariant metrics
+      - developability, germline, regions, similarity: target-invariant metrics
 
     Per-target metrics are pulled from boltzgen.per_nanobody_components,
     mirroring how molecule metrics are pulled from boltz.per_molecule_components.
+    AbNumber Chain objects on nanobody_data are not serialized.
     """
     developability_results = nanobody_data.get('developability_result', [])
-    nativeness_results = nanobody_data.get('nativeness_result', [])
+    germline_results = nanobody_data.get('germline_results', [])
+    region_results = nanobody_data.get('regions', [])
     similarity_results = nanobody_data.get('similarity_results', [])
 
     per_nanobody_components = getattr(boltzgen, 'per_nanobody_components', None) or {}
@@ -257,6 +305,10 @@ def _build_nanobody_details(
         dev = developability_results[idx] if idx < len(developability_results) else None
         developability = None
         if dev is not None:
+            aggrescan = dev.get("aggrescan3d")
+            keys_to_remove = ["passed", "citation_doi", "sequence_hash", "status", "input_structure_sha256", "normalized_structure_sha256", "failed_metrics"]
+            for key in keys_to_remove:
+                aggrescan.pop(key, None)
             developability = {
                 "passed": dev.get("passed"),
                 "total_cdr_length": dev.get("total_cdr_length"),
@@ -266,45 +318,24 @@ def _build_nanobody_details(
                 "positive_charge_patches": dev.get("positive_charge_patches"),
                 "negative_charge_patches": dev.get("negative_charge_patches"),
                 "flags": dev.get("flags"),  # dict of {flag_name: "green"/"red"/...}
+                "sequence_sha256": dev.get("sequence_sha256"),
+                "aggrescan3d": _to_json_safe(aggrescan) if aggrescan is not None else None,
             }
 
-        # --- Target-invariant: nativeness ---
-        nat = nativeness_results[idx] if idx < len(nativeness_results) else None
-        nativeness = None
-        if nat is not None:
-            nat_dict = _to_json_safe(nat)
-            nativeness = {
-                "vhh_nativeness": nat_dict.get("vhh_nativeness"),
-                "human_framework": nat_dict.get("human_framework"),
-                "features": nat_dict.get("features"),  # full features dict (as json object because key can vary)
-            }
-
-        # --- Target-invariant: similarity ---
-        sim = similarity_results[idx] if idx < len(similarity_results) else None
-        similarity = None
-        if sim is not None:
-            sim_dict = _to_json_safe(sim)
-            matches_raw = sim_dict.get("matches", [])
-            similarity = {
-                "matches": [
-                    {
-                        "target_id": str(m.get("target_id")) if m.get("target_id") is not None else None,
-                        "target_sequence": str(m.get("target_sequence")) if m.get("target_sequence") is not None else None,
-                        "identity": _safe_num(float(m.get("identity"))) if m.get("identity") is not None else None,
-                        "tier": str(m.get("tier")) if m.get("tier") is not None else None,
-                        "cdr_similarity": _to_json_safe(m.get("cdr_similarity")) if m.get("cdr_similarity") is not None else None,
-                    }
-                    for m in matches_raw
-                ]
-            }
+        germline = _germline_payload(
+            germline_results[idx] if idx < len(germline_results) else None
+        )
+        regions = _regions_payload(
+            region_results[idx] if idx < len(region_results) else None
+        )
 
         nanobody_details.append({
             "sequence": sequence,
             "sequence_hash": seq_hash,
             "target_scores": target_scores,             # per-target (goes to nanobodies table)
             "developability": developability,            # invariant (goes to nanobody_properties)
-            "nativeness": nativeness,                    # invariant (goes to nanobody_properties)
-            "similarity": similarity,                    # invariant (goes to nanobody_properties)
+            "germline": germline,                        # invariant (goes to nanobody_properties)
+            "regions": regions,                          # invariant (goes to nanobody_properties)
         })
 
     return nanobody_details
@@ -592,8 +623,15 @@ async def submit_epoch_results(
     valid_nanobodies_by_uid: dict,
     score_dict: dict,
     nanobody_ranks: dict[int, int] | None = None,
+    allowed_v: str | None = None,
+    allowed_cdr3_length: int | None = None,
 ) -> None:
-    competition = _build_competition_payload(config, current_epoch)
+    competition = _build_competition_payload(
+        config,
+        current_epoch,
+        allowed_v=allowed_v,
+        allowed_cdr3_length=allowed_cdr3_length,
+    )
     submissions = _build_submissions_payload(
         config, metagraph, boltz, boltzgen, current_block, start_block,
         uid_to_data, valid_molecules_by_uid, valid_nanobodies_by_uid,

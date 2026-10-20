@@ -85,9 +85,6 @@ nanobody_requirements:
   num_sequences: 1
   min_sequence_length: 90
   max_sequence_length: 150
-  min_cysteines: 1 # minimum number of cysteines required
-  cys_pair_min_separation: 35 # minimum separation between cysteine pairs, only valid when min_cysteines > 1
-  cys_pair_max_separation: 80 # maximum separation between cysteine pairs, only valid when min_cysteines > 1
   max_homopolymer_run: 6 # maximum length of a homopolymer run (e.g. AAAAAA)
   max_di_repeat_pairs: 4 # maximum number of di-repeat pairs (e.g."GSGSGSGSGS" has 5 pairs -> reject)
   reject_signal_peptides: true # reject sequences that look like signal peptides (strong N term hydrophobicity)
@@ -95,10 +92,23 @@ nanobody_requirements:
   sp_hydro_min_in_window: 8 # >=8 hydrophobic in a 12-aa window
   sp_scan_prefix: 30 # length of N term sequence to scan for signal peptide
   min_nativeness_score: 0.45
-  min_human_framework_score: 0.85
   max_similarity_score: 0.95 # maximum similarity score to top sequences for that target (calculated by metanano.search.search_engine)
-  num_top_sequences: 50 # number of top sequences to consider for similarity check
+  num_top_sequences: null # number of top sequences to consider for similarity check, if None, all top sequences are considered
   enforce_vhh_hallmarks: true # enforce VHH FR2 region hallmark residues (E/Q at pos 49, R at pos 50)
+  psh_strict_rejection_threshold: 89 # strict rejection threshold for surface hydrophobic patches (less than, inclusive)
+  min_human_v_identity: 82
+  min_human_j_identity: 86
+
+# Germline filtering configuration
+germline_filtering:
+  v_neighborhood_categories:
+    V1: ["IGHV3-23"]
+    V2: ["IGHV3-66"]
+    V3: ["IGHV3-74"]
+    V4: ["IGHV3-7", "IGHV3-11", "IGHV3-43", "IGHV3-48", "IGHV3-53", "IGHV3-64"]
+  cdr3_length_range:
+    min: 5
+    max: 23
 
 boltzgen_config:
   boltzgen_rank_mode: min # "max" or "min"

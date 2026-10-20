@@ -18,11 +18,14 @@ from .nanobodies import (
     has_plausible_cys_pair, 
     looks_like_signal_peptide, 
     analyze_developability, 
-    compute_igblast_nativeness,
     index_top_sequences,
     is_duplicate,
-    classify_vhh_vh
+    extract_chains_batch,
+    classify_chain,
+    extract_regions_from_chains,
 )
+from .germline_identity import human_germline_identity_anarci
+from .aggrescan3d import aggrescan_rejection, score_structure
 from .btdr import QuicknetBittensorDrandTimelock
 from .constants import NOVA_DIR, ALLOWED_AAS, HYDROPHOBIC, CAMELID_DB_V, HUMAN_DB_V
 from .minmax_weighted_rank import rank_binders

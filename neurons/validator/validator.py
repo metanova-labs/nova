@@ -64,21 +64,27 @@ async def process_epoch(config, current_block, metagraph, chain):
 
         # Get challenge parameters for this epoch
         challenge_params = get_challenge_params_from_blockhash(
+            config=config,
             block_hash=start_block_hash,
-            small_molecule_target=config.small_molecule_target,
-            nanobody_target=config.nanobody_target,
-            include_reaction=config.random_valid_reaction,
         )
         if challenge_params:
             small_molecule_target = challenge_params.get("small_molecule_target")
             nanobody_target = challenge_params.get("nanobody_target")
             allowed_reaction = challenge_params.get("allowed_reaction")
+            allowed_v = challenge_params.get("allowed_v")
+            allowed_cdr3_length = challenge_params.get("allowed_cdr3_length")
         else:
             bt.logging.error("Failed to get challenge parameters from blockhash.")
             return None
 
         if allowed_reaction:
             bt.logging.info(f"Allowed reaction this epoch: {allowed_reaction}")
+
+        if allowed_v:
+            bt.logging.info(f"Allowed V neighborhood this epoch: {allowed_v}")
+
+        if allowed_cdr3_length:
+            bt.logging.info(f"Allowed CDR3 length this epoch: {allowed_cdr3_length}")
 
         bt.logging.info(f"Scoring using small molecule target: {small_molecule_target} and nanobody target: {nanobody_target}")
 
@@ -121,6 +127,8 @@ async def process_epoch(config, current_block, metagraph, chain):
                 uid_to_data=uid_to_data,
                 score_dict=score_dict,
                 config=config,
+                allowed_v=allowed_v,
+                allowed_cdr3_length=allowed_cdr3_length,
             )
 
         with stage(
@@ -217,6 +225,8 @@ async def process_epoch(config, current_block, metagraph, chain):
                     valid_nanobodies_by_uid=valid_nanobodies_by_uid,
                     score_dict=score_dict,
                     nanobody_ranks=nanobody_ranks,
+                    allowed_v=allowed_v,
+                    allowed_cdr3_length=allowed_cdr3_length,
                 )
                 # only our validator creates protein viz files
                 try:
@@ -258,7 +268,7 @@ async def main(config):
     test_mode = bool(getattr(config, 'test_mode', False))
     local_input = bool(getattr(config, 'local_input_file', None))
     remote_weights = bool(getattr(config, 'remote_weights', False))
-    
+
     # Initialize subtensor client
     chain = ChainClient(config.network)
     
