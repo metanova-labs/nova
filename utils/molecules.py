@@ -32,7 +32,8 @@ def get_smiles(product_name):
 
 def is_boltz_safe_smiles(smiles: str) -> tuple[bool, str | None]:
     """
-    Replicates Boltz atom-name generation and enforces <= 4 characters.
+    Replicates Boltz atom-name generation and enforces <= 4 characters
+    + checks for molecules that fail to generate a valid conformer
     Returns (ok, reason). ok=False means the SMILES should be rejected for Boltz.
     """
     try:
@@ -40,11 +41,21 @@ def is_boltz_safe_smiles(smiles: str) -> tuple[bool, str | None]:
         if mol is None:
             return False, "RDKit failed to parse SMILES"
         mol = AllChem.AddHs(mol)
+
+        # check for atoms with more than 4 characters
         canonical_order = AllChem.CanonicalRankAtoms(mol)
         for atom, can_idx in zip(mol.GetAtoms(), canonical_order):
             atom_name = atom.GetSymbol().upper() + str(can_idx + 1)
             if len(atom_name) > 4:
                 return False, f"Atom name would exceed 4 chars: {atom_name}"
+
+        # check for molecules that fail to generate a valid conformer
+        params = AllChem.ETKDGv3()
+        if AllChem.EmbedMolecule(mol, params) == -1:
+            params.useRandomCoords = True
+            if AllChem.EmbedMolecule(mol, params) == -1:
+                return False, "RDKit ETKDG failed to generate a conformer"
+
         return True, None
     except Exception as e:
         return False, f"Boltz safety check failed: {e}"
