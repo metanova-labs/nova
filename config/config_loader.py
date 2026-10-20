@@ -53,7 +53,6 @@ def load_config(path: str = "config/config.yaml"):
     sp_window = nanobody_config["sp_window"]
     sp_hydro_min_in_window = nanobody_config["sp_hydro_min_in_window"]
     sp_scan_prefix = nanobody_config["sp_scan_prefix"]
-    min_nativeness_score = nanobody_config["min_nativeness_score"]
     max_similarity_score = nanobody_config["max_similarity_score"]
     num_top_sequences = nanobody_config["num_top_sequences"]
     enforce_vhh_hallmarks = nanobody_config["enforce_vhh_hallmarks"]
@@ -101,7 +100,6 @@ def load_config(path: str = "config/config.yaml"):
         'sp_window': sp_window,
         'sp_hydro_min_in_window': sp_hydro_min_in_window,
         'sp_scan_prefix': sp_scan_prefix,
-        'min_nativeness_score': min_nativeness_score,
         'max_similarity_score': max_similarity_score,
         'num_top_sequences': num_top_sequences,
         'enforce_vhh_hallmarks': enforce_vhh_hallmarks,
