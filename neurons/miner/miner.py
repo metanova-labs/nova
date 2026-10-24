@@ -384,10 +384,9 @@ async def run_miner(config: argparse.Namespace) -> None:
 
     block_hash = await subtensor.determine_block_hash(block_to_check)
     challenge_params = get_challenge_params_from_blockhash(
-        block_hash=block_hash,
-        small_molecule_target=config.small_molecule_target,
-        nanobody_target=config.nanobody_target,
-        include_reaction=config.random_valid_reaction
+        config = config,
+        block_hash = block_hash,
+        num_antitargets = 0,
     )
     bt.logging.info(f"Challenge params: {challenge_params}")
 
@@ -413,11 +412,11 @@ async def run_miner(config: argparse.Namespace) -> None:
                 block_hash = await subtensor.determine_block_hash(current_block)
                 
                 challenge_params = get_challenge_params_from_blockhash(
-                    block_hash=block_hash,
-                    small_molecule_target=config.small_molecule_target,
-                    nanobody_target=config.nanobody_target,
-                    include_reaction=config.random_valid_reaction
+                    config = config,
+                    block_hash = block_hash,
+                    num_antitargets = 0,
                 )
+                bt.logging.info(f"Challenge params: {challenge_params}")
 
                 # Update state with your results and other relevant info here
                 candidate_small_molecules, candidate_nanobodies = dummy_get_candidate_products()

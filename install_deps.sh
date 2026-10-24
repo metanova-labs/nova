@@ -51,8 +51,23 @@ wget -qO- https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
 # Install system build/env tools (Ubuntu/Debian):
-sudo apt update && sudo apt install -y build-essential
+sudo apt update && sudo apt install -y build-essential git
 sudo apt install -y python"$PYTHON_VERSION"-venv
+
+# Build Aggrescan3D and pinned FreeSASA into NOVA-nanobody-filter/.tools/bin.
+NOVA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sh "$NOVA_ROOT/NOVA-nanobody-filter/install/install-aggrescan3d.sh" || {
+  echo "Aggrescan3D install failed" >&2
+  exit 1
+}
+test -x "$NOVA_ROOT/NOVA-nanobody-filter/.tools/bin/aggrescan3d-rs" || {
+  echo "aggrescan3d-rs was not installed" >&2
+  exit 1
+}
+test -x "$NOVA_ROOT/NOVA-nanobody-filter/.tools/bin/freesasa" || {
+  echo "freesasa was not installed" >&2
+  exit 1
+}
 
 # install hmmer and mmseqs2
 sudo apt install -y hmmer

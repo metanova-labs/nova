@@ -18,7 +18,11 @@ Competitions last for **361 blocks** and run continuously. Miner submissions mus
    Each epoch, challenge parameters are derived from the **epoch start block hash** via the `get_challenge_params_from_blockhash()` function. This function returns:
    - `small_molecule_target`: protein(s) for small-molecule tasks (pulled from config)
    - `nanobody_target`: protein(s) for nanobody tasks (also pulled from config)
-   - `allowed_reaction`: when reaction filtering is on, small molecules need to comply with the single allowed reaction type for that epoch (e.g. `"rxn:3"`)
+   - `allowed_reaction`: when reaction filtering is on, small molecules need to comply with the single allowed reaction type for that epoch (e.g. `"rxn:3"`). Chosen as `seed % total_reactions`.
+   - `allowed_v`: when `germline_filtering.v_neighborhood_categories` is set, one human V gene for the epoch. The same block hash seeds `random.Random`. A category is drawn first, then one gene from that category when it lists more than one. Current categories are `IGHV3-23`, `IGHV3-66`, `IGHV3-74`, and `IGHV3-7` / `IGHV3-11` / `IGHV3-43` / `IGHV3-48` / `IGHV3-53` / `IGHV3-64`.
+   - `allowed_cdr3_length`: when `germline_filtering.cdr3_length_range` is set, one CDR3 length drawn from that inclusive range (currently 5–23) with the same RNG, after the V-gene draw.
+
+   Antitarget sampling is unused. With the default call, the RNG is consumed only by the V-gene draw and then the CDR3-length draw, so both can be reproduced from the epoch start block hash and `config/config.yaml`.
 
 2. **Candidate products**  
    The basline miner provides functions that comply with submission format (encryption, expected format, etc.) The actual selection of molecules and design of nanobody sequences need to be implemented by each miner (see resources to help with that in the sections below). **This means that simply running the baseline miner without modifications will *NOT* result in incentive distribution.**
@@ -124,17 +128,28 @@ Implemented in `neurons/validator/nanobody_validity.validate_nanobodies()`. Chec
 6. **Di-repeat pairs**  
    `max_di_repeat_pairs(seq)` must be ≤ `config["max_di_repeat_pairs"]` (e.g. GSGSGSGS -> 4 di-repeat pairs).
 
-7. **Cysteine count**  
-   Each sequence must have at least `config["min_cysteines"]` cysteines (e.g. 1). If `min_cysteines > 1`, at least one sequence must have a plausible cysteine pair (separation within `cys_pair_min_separation` and `cys_pair_max_separation`).
-
-8. **Signal peptide**  
+7. **Signal peptide**  
    If enabled, sequences that look like signal peptides (e.g. strong N-terminal hydrophobicity in the configured window) are rejected.
 
-9. **Uniqueness per target**  
+8. **Uniqueness per target**  
    For each `target` in `config["nanobody_target"]`, all sequence hashes must be unique for that target (`entry_unique_for_protein_hf(target, h, 'nanobodies')`). If any hash is not unique for any target, the entire submission is invalid.
 
+9. **Similarity to archived top sequences**  
+   For each nanobody target, each sequence is searched against that target's archived top sequences. The submission is rejected if any hit is a duplicate: whole-sequence identity ≥ 0.95; CDR3 identity ≥ 0.85; CDR3 identity ≥ 0.80 with CDR1 and CDR2 both ≥ 0.90; or whole-sequence identity ≥ 0.90 when CDR data is missing. If the archive for a target cannot be loaded, that target's similarity search is skipped.
+
+10. **Human germline identity**  
+    Each sequence must number as exactly one heavy-chain domain under ANARCI. V identity must be at least `min_human_v_identity` (82) and J identity at least `min_human_j_identity` (86). When the epoch has an `allowed_v`, at least one sequence's V gene call must include that gene.
+
+11. **VHH numbering, canonical cysteines, and CDR3 length**  
+    Every sequence must classify as a VHH on the IMGT scheme. With `enforce_vhh_hallmarks`, IMGT H49 must be E or Q and H50 must be R. IMGT H23 and H104 must both be cysteine. When the epoch has an `allowed_cdr3_length`, every sequence's CDR3 must be exactly that length.
+
+12. **Developability**  
+    Surviving sequences are profiled together. A sequence is rejected if the profile has red flags or an error, if `surface_hydrophobic_patches` is above `psh_strict_rejection_threshold` (89; the threshold itself passes), or if Aggrescan3D fails its cap. A failure of the batch profile drops every UID in that batch.
+
+Submissions with more sequences than `num_sequences` keep only the first `num_sequences`. Fewer than `num_sequences` is invalid.
+
 **Takeaway for miners:**  
-Submit the required number of sequences; normalize (e.g. uppercase, valid AAs only); stay within length and diversity constraints and ensure uniqueness per target.
+Submit the required number of sequences; normalize (e.g. uppercase, valid AAs only); stay within length and diversity constraints; match the epoch's V gene and CDR3 length; pass VHH, germline, uniqueness, and developability checks.
 
 ---
 
@@ -167,8 +182,14 @@ From `config/config.yaml` and `config_loader.py`:
 | `filters` | Molecule validity | RDKit property filter thresholds (see `utils/filters.py`). |
 | `num_molecules`, `num_sequences` | Format + scoring | How many molecules/sequences to send and to score. |
 | `min_sequence_length`, `max_sequence_length` | Nanobody validity | Allowed nanobody length range. |
-| `min_cysteines`, `cys_pair_*`, `max_homopolymer_run`, `max_di_repeat_pairs` | Nanobody validity | Structural/diversity constraints. |
+| `max_homopolymer_run`, `max_di_repeat_pairs` | Nanobody validity | Structural/diversity constraints. |
 | `reject_signal_peptides`, `sp_*` | Nanobody validity | Signal-peptide heuristic. |
+| `v_neighborhood_categories` | Challenge params + nanobody validity | V-gene neighborhoods. One gene is drawn per epoch as `allowed_v`. |
+| `cdr3_length_range` | Challenge params + nanobody validity | Inclusive CDR3 length range. One length is drawn per epoch as `allowed_cdr3_length`. |
+| `min_human_v_identity`, `min_human_j_identity` | Nanobody validity | Minimum human V and J identity from ANARCI. |
+| `enforce_vhh_hallmarks` | Nanobody validity | Require IMGT H49 in {E, Q} and H50 = R. |
+| `num_top_sequences` | Nanobody validity | How many archived top sequences to search for duplicates. `null` uses all of them. |
+| `psh_strict_rejection_threshold` | Nanobody validity | Maximum passing surface-hydrophobic-patch score (values above this are rejected). |
 | `boltz_mode`, `boltzgen_rank_mode` | Ranking | Whether higher or lower score wins. |
 | `no_submission_blocks` | Commitments | Commitments too close to epoch end (within this many blocks) are ignored. |
 

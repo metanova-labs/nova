@@ -29,7 +29,7 @@ def get_historical_submissions(target: str, entity_type: str, revision: str = No
     
     return historical_submissions
 
-def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: str, nanobody_target: str, num_antitargets: int = 0, include_reaction: bool = False) -> dict:
+def get_challenge_params_from_blockhash(config: dict, block_hash: str, num_antitargets: int = 0) -> dict:
     """
     Use block_hash as a seed to pick 'random_valid_reaction'. If num_antitargets > 0, also pick 'antitargets' random entries (out of use).
     Returns {'small_molecule_target': ..., 'nanobody_target': ..., 'random_valid_reaction': ..., 'antitargets': [...], 'allowed_reaction': '...'}.
@@ -48,8 +48,8 @@ def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: 
     rng = random.Random(seed)
 
     result = {
-        "small_molecule_target": small_molecule_target,
-        "nanobody_target": nanobody_target,
+        "small_molecule_target": config["small_molecule_target"],
+        "nanobody_target": config["nanobody_target"]
     }
 
     if num_antitargets > 0:
@@ -75,7 +75,7 @@ def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: 
         antitargets = [dataset[i]["Entry"] for i in antitarget_indices]
         result["antitargets"] = antitargets
 
-    if include_reaction:
+    if config["random_valid_reaction"]:
         try:
             from .reactions import get_total_reactions
             total_reactions = get_total_reactions()
@@ -85,6 +85,26 @@ def get_challenge_params_from_blockhash(block_hash: str, small_molecule_target: 
             raise
         except Exception as e:
             bt.logging.warning(f"Failed to determine allowed reaction: {e}, defaulting to all reactions allowed")
+
+    if config["v_neighborhood_categories"]:
+        v_categories = config["v_neighborhood_categories"]
+
+        allowed_v = rng.choice(list(v_categories.keys()))
+        allowed_v = v_categories.get(allowed_v)
+        if len(allowed_v) > 1:
+            allowed_v = rng.choice(allowed_v)
+        elif len(allowed_v) == 1:
+            allowed_v = allowed_v[0]
+        else:
+            bt.logging.error(f"Invalid V neighborhood category: {allowed_v}")
+            return None
+
+        result["allowed_v"] = allowed_v
+    
+    if config["cdr3_length_range"]:
+        cdr3_length_range = config["cdr3_length_range"]
+        allowed_cdr3_length = rng.choice(list(cdr3_length_range))
+        result["allowed_cdr3_length"] = allowed_cdr3_length
 
     return result
 
