@@ -57,9 +57,11 @@ Validates nanobody (protein sequence) submissions:
   - Sequence length constraints
   - Homopolymer runs
   - Di-repeat pairs
-  - Cysteine pairing
   - Signal peptide patterns
-  - Duplicate sequences
+  - Duplicate sequences, including similarity to archived top sequences
+  - Human germline identity, the epoch's allowed V gene, and VHH hallmarks
+  - Canonical IMGT cysteines (H23 and H104) and the epoch's allowed CDR3 length
+  - Developability, surface hydrophobic patches, and Aggrescan3D
 
 #### `ranking.py`
 Score calculation and winner determination:
@@ -229,8 +231,12 @@ Examples:
 - Calculates start and end blocks for current epoch
 
 ### 2. Challenge Parameters
-- Derives the random challenge parameters from block hash:
-  - Allowed reaction (if filtering enabled)
+- Derives challenge parameters from the epoch start block hash via `get_challenge_params_from_blockhash()`:
+  - Targets, from config
+  - Allowed reaction, when reaction filtering is enabled (`seed % total_reactions`)
+  - Allowed V gene, when `v_neighborhood_categories` is set: one category, then one gene from that category
+  - Allowed CDR3 length, when `cdr3_length_range` is set: one length from the inclusive range, drawn after the V gene
+  - `allowed_v` and `allowed_cdr3_length` are passed into `validate_nanobodies()`
 
 ### 3. Commitment Gathering
 - Retrieves commitments from blockchain for all miners
@@ -245,7 +251,7 @@ Examples:
 
 ### 5. Validation
 - **Molecules**: Validates SMILES, checks duplicates, reaction compatibility, minimum required entropy if num_molecules > 1.
-- **Nanobodies**: Validates sequences, checks length, composition, patterns
+- **Nanobodies**: Validates sequences, then germline and VHH numbering, the epoch V gene and CDR3 length, and developability
 
 ### 6. Scoring
 - Runs ML models (Boltz for molecules, Boltzgen for nanobodies)
@@ -302,9 +308,13 @@ All validators running share the scores they obtained via a dedicated API. This 
 - Must contain only valid amino acids (ACDEFGHIKLMNPQRSTVWY)
 - Length between `min_sequence_length` and `max_sequence_length`
 - No homopolymer runs exceeding `max_homopolymer_run`
-- Valid cysteine pairing
+- No di-repeat pairs exceeding `max_di_repeat_pairs`
 - No signal peptide patterns
-- No duplicate sequences
+- No duplicate sequences, and no duplicate of an archived top sequence for the target (whole-sequence identity ≥ 0.95, CDR3 identity ≥ 0.85, or CDR3 ≥ 0.80 with CDR1 and CDR2 both ≥ 0.90)
+- Human V and J identity at or above `min_human_v_identity` and `min_human_j_identity`; at least one sequence must carry the epoch's `allowed_v`
+- IMGT VHH, with hallmark residues when `enforce_vhh_hallmarks` is set; H23 and H104 must be cysteine
+- Every CDR3 length must equal the epoch's `allowed_cdr3_length`
+- Developability profile must have no red flags; surface hydrophobic patches must be at or below `psh_strict_rejection_threshold`; Aggrescan3D must pass
 
 ## Logging
 

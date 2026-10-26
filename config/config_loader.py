@@ -47,20 +47,23 @@ def load_config(path: str = "config/config.yaml"):
     num_sequences = nanobody_config["num_sequences"]
     min_sequence_length = nanobody_config["min_sequence_length"]
     max_sequence_length = nanobody_config["max_sequence_length"]
-    min_cysteines = nanobody_config["min_cysteines"]
-    cys_pair_min_separation = nanobody_config["cys_pair_min_separation"]
-    cys_pair_max_separation = nanobody_config["cys_pair_max_separation"]
     max_homopolymer_run = nanobody_config["max_homopolymer_run"]
     max_di_repeat_pairs = nanobody_config["max_di_repeat_pairs"]
     reject_signal_peptides = nanobody_config["reject_signal_peptides"]
     sp_window = nanobody_config["sp_window"]
     sp_hydro_min_in_window = nanobody_config["sp_hydro_min_in_window"]
     sp_scan_prefix = nanobody_config["sp_scan_prefix"]
-    min_nativeness_score = nanobody_config["min_nativeness_score"]
-    min_human_framework_score = nanobody_config["min_human_framework_score"]
     max_similarity_score = nanobody_config["max_similarity_score"]
     num_top_sequences = nanobody_config["num_top_sequences"]
     enforce_vhh_hallmarks = nanobody_config["enforce_vhh_hallmarks"]
+    psh_strict_rejection_threshold = nanobody_config["psh_strict_rejection_threshold"]
+    min_human_v_identity = nanobody_config["min_human_v_identity"]
+    min_human_j_identity = nanobody_config["min_human_j_identity"]
+
+    germline_filtering_config = config["germline_filtering"]
+    v_neighborhood_categories = germline_filtering_config["v_neighborhood_categories"]
+    cdr3_length_range = range(germline_filtering_config["cdr3_length_range"]["min"], 
+        germline_filtering_config["cdr3_length_range"]["max"] + 1) # inclusive max
 
     # Load reaction filtering configuration
     reaction_config = config["reaction_filtering"]
@@ -91,23 +94,23 @@ def load_config(path: str = "config/config.yaml"):
         'num_sequences': num_sequences,
         'min_sequence_length': min_sequence_length,
         'max_sequence_length': max_sequence_length,
-        'min_cysteines': min_cysteines,
-        'cys_pair_min_separation': cys_pair_min_separation,
-        'cys_pair_max_separation': cys_pair_max_separation,
         'max_homopolymer_run': max_homopolymer_run,
         'max_di_repeat_pairs': max_di_repeat_pairs,
         'reject_signal_peptides': reject_signal_peptides,
         'sp_window': sp_window,
         'sp_hydro_min_in_window': sp_hydro_min_in_window,
         'sp_scan_prefix': sp_scan_prefix,
-        'min_nativeness_score': min_nativeness_score,
-        'min_human_framework_score': min_human_framework_score,
         'max_similarity_score': max_similarity_score,
         'num_top_sequences': num_top_sequences,
         'enforce_vhh_hallmarks': enforce_vhh_hallmarks,
         'boltzgen_rank_mode': boltzgen_rank_mode,
         'boltzgen_rank_by': boltzgen_rank_by,
         'max_similarity_to_historical': max_similarity_to_historical,
+        'psh_strict_rejection_threshold': psh_strict_rejection_threshold,
+        'min_human_v_identity': min_human_v_identity,
+        'min_human_j_identity': min_human_j_identity,
+        'v_neighborhood_categories': v_neighborhood_categories,
+        'cdr3_length_range': cdr3_length_range,
     }
 
 def load_boltzgen_metrics(path: str = "config/boltzgen_config.yaml") -> dict:

@@ -9,55 +9,45 @@ from utils import (
     has_plausible_cys_pair,
     looks_like_signal_peptide,
     analyze_developability,
-    compute_igblast_nativeness,
+    aggrescan_rejection,
     index_top_sequences,
+    extract_chains_batch,
     is_duplicate,
-    classify_vhh_vh,
+    classify_chain,
+    extract_regions_from_chains,
     NOVA_DIR,
+    human_germline_identity_anarci,
 )
 from utils.stage_timer import stage
 
 ALLOWED_AAS = set("ACDEFGHIKLMNPQRSTVWY")
 HYDROPHOBIC = set("AILMFWV")
 
-def _is_tnp_compute_error(result) -> bool:
-    """Did the TNP profile fail to compute, as opposed to failing the criteria?
-
-    Prefers the explicit ``error`` flag the developability service sets for a
-    compute failure; falls back to the reason text so this behaves correctly
-    against a service that does not set it yet.
-    """
-    if result is None:
-        return True
-    get = result.get if hasattr(result, "get") else lambda k, d=None: getattr(result, k, d)
-    if get("passed"):
-        return False
-    if get("error"):
-        return True
-    return "Failed to compute TNP profile" in str(get("reason") or "")
-
-
 async def validate_nanobodies(
     uid_to_data: dict[int, dict[str, list]],
     score_dict: dict[int, dict[str, list[list[float]]]],
     config: dict,
+    allowed_v: list[str] = None,
+    allowed_cdr3_length: list[int] = None,
 ) -> dict[int, dict[str, list[str]]]:
     """
     Validate nanobodies and return a dictionary of valid nanobodies by uid
     """
-    
+
     pre_validated = {}
 
     # index top sequences for all targets
     search_engines = {}
     for target in config["nanobody_target"]:
-        search_engines[target] = index_top_sequences(target)
+        search_engines[target] = index_top_sequences(target, config["num_top_sequences"])
 
     for uid, data in uid_to_data.items():
 
         normalized_sequences = [normalize_seq(seq) for seq in data["sequences"]]
         submission_hashes = [seq_hash(seq) for seq in normalized_sequences]
 
+
+        # Tier 1: basic sequence validity checks
         if any("~" in seq for seq in normalized_sequences):
             continue
 
@@ -94,17 +84,6 @@ async def validate_nanobodies(
             bt.logging.warning(f"UID {uid}: contains not allowed di-repeat pairs")
             continue
 
-        # cysteine count and pair separation
-        cys_counts = [seq.count("C") for seq in normalized_sequences]
-        if any(cys_count < config["min_cysteines"] for cys_count in cys_counts):
-            bt.logging.warning(f"UID {uid}: contains sequences with too few cysteines")
-            continue
-
-        if config["min_cysteines"] > 1:
-            if not any(has_plausible_cys_pair(seq, config["cys_pair_min_separation"], config["cys_pair_max_separation"]) for seq in normalized_sequences):
-                bt.logging.warning(f"UID {uid}: contains sequences with no plausible cysteine pairs")
-                continue
-
         # signal peptide heuristic
         if any(looks_like_signal_peptide(seq, config["sp_window"], config["sp_hydro_min_in_window"], config["sp_scan_prefix"]) for seq in normalized_sequences):
             bt.logging.warning(f"UID {uid}: contains signal peptide-like sequences")
@@ -123,8 +102,9 @@ async def validate_nanobodies(
         if not is_unique:
             continue
 
-        # similarity to top sequences search
+        # region-aware similarity to historical sequences
         uid_invalid = False
+        similarity_results = None
         for target in config["nanobody_target"]:
             search_engine = search_engines[target]
             similarity_results = []
@@ -161,73 +141,86 @@ async def validate_nanobodies(
         if uid_invalid:
             continue
 
+        # Tier 2:human germline identity scoring
+        germline_results = []
+        for seq in normalized_sequences:
+            try:
+                germline_result = human_germline_identity_anarci(seq)
+                bt.logging.debug(f"UID {uid}: germline result: {germline_result}")
+                germline_results.append(germline_result)
+            except ValueError as e1:
+                bt.logging.warning(f"UID {uid}: {e1}")
+                uid_invalid = True
+                break
+            except Exception as e2:
+                bt.logging.warning(f"UID {uid}: error scoring germline identity: {e2}")
+                uid_invalid = True
+                break
+
+        if uid_invalid:
+            continue
+
+        if allowed_v:
+            passes_v_filter = any(allowed_v in germline_result['V']['genes'] for germline_result in germline_results)
+            if not passes_v_filter:
+                bt.logging.warning(f"UID {uid}: contains sequences that are not in the allowed V neighborhood ({allowed_v})")
+                continue
+
+        if any(germline_result['V']['identity_pct'] < config["min_human_v_identity"] or germline_result['J']['identity_pct'] < config["min_human_j_identity"] for germline_result in germline_results):
+            bt.logging.warning(f"UID {uid}: contains sequences that are do not meet human germline identity thresholds")
+            continue
+
         pre_validated[uid] = {
             "sequences": normalized_sequences,
             "hashes": submission_hashes,
             "similarity_results": similarity_results if similarity_results else [],
+            "germline_results": germline_results if germline_results else [],
         }
 
-    # --- batch nativeness check across all surviving UIDs ---
-    if not pre_validated:
-        return {}
+    # Tier 3: validity checks from AbNumber Chain object
+    sequences_flat = {f"{uid}-{i}": seq for uid in pre_validated.keys() for i, seq in enumerate(pre_validated[uid]["sequences"])}
+    chains = extract_chains_batch(sequences_flat)
 
-    all_nativeness_seqs = {}
-    for uid, info in pre_validated.items():
-        for h, seq in zip(info["hashes"], info["sequences"]):
-            all_nativeness_seqs[h] = seq
-
-    results_by_id = {}
-    try:
-        with stage("igblast_nativeness", n=len(all_nativeness_seqs)):
-            all_nativeness_results = compute_igblast_nativeness(all_nativeness_seqs)
-        results_by_id = {r.sequence_id: r for r in all_nativeness_results}
-    except Exception as e:
-        bt.logging.warning(f"Batch IgBLAST failed ({e}), falling back to per-UID")
-        for uid, info in pre_validated.items():
-            try:
-                uid_results = compute_igblast_nativeness(
-                    {h: seq for h, seq in zip(info["hashes"], info["sequences"])}
-                )
-                for r in uid_results:
-                    results_by_id[r.sequence_id] = r
-            except Exception as e2:
-                bt.logging.warning(f"UID {uid}: IgBLAST failed ({e2}), rejecting")
-
-    post_nativeness = {}
-    for uid, info in pre_validated.items():
-        nativeness_result = [results_by_id.get(h) for h in info["hashes"]]
-        if any(r is None for r in nativeness_result):
-            bt.logging.warning(f"UID {uid}: missing IgBLAST results, rejecting")
+    post_chain_validity_checks = {}
+    for uid, uid_chains in chains.items():
+        # check that all chains are VHH
+        all_vhh = all(classify_chain(c, enforce_hallmarks=config["enforce_vhh_hallmarks"]) == "VHH" for c in uid_chains)
+        if not all_vhh:
+            bt.logging.warning(f"UID {uid}: contains sequences that are not VHH")
             continue
 
-        bt.logging.debug(f"UID {uid}: nativeness/humanness results: {nativeness_result}")
-
-        domain_type = [classify_vhh_vh(r.features.get("fr2_pos49", "X"), r.features.get("fr2_pos50", "X")) for r in nativeness_result]
-        if config["enforce_vhh_hallmarks"] and any(d == "VH" for d in domain_type):
-            vh = [seq for seq, d in zip(info["sequences"], domain_type) if d == "VH"]
-            bt.logging.warning(f"UID {uid}: contains sequences that are not VHH: {vh}")
+        # check canonical cysteines
+        try:
+            has_canonical_cysteines = all(c["H23"] == "C" and c["H104"] == "C" for c in uid_chains)
+        except KeyError as e:
+            bt.logging.warning(f"UID {uid} contains missing IMGT positions: {e}")
+            continue
+        if not has_canonical_cysteines:
+            bt.logging.warning(f"UID {uid}: contains sequences that do not contain the canonical cysteines")
             continue
 
-        if any(r.vhh_nativeness < config["min_nativeness_score"] for r in nativeness_result):
-            low = [seq for seq, r in zip(info["sequences"], nativeness_result) if r.vhh_nativeness < config["min_nativeness_score"]]
-            bt.logging.warning(f"UID {uid}: contains sequences that are low in nativeness score: {low}")
-            continue
-        if any(r.human_framework < config["min_human_framework_score"] for r in nativeness_result):
-            low = [seq for seq, r in zip(info["sequences"], nativeness_result) if r.human_framework < config["min_human_framework_score"]]
-            bt.logging.warning(f"UID {uid}: contains sequences that are low in human framework score: {low}")
-            continue
-        post_nativeness[uid] = {
-            **info,
-            "nativeness_result": nativeness_result,
+        # check allowed CDR3 length for this round
+        if allowed_cdr3_length:
+            cdr3_lengths = [len(c.cdr3_seq) for c in uid_chains]
+            print(f"UID {uid}: cdr3_lengths: {cdr3_lengths}")
+            if any(cdr3_length != allowed_cdr3_length for cdr3_length in cdr3_lengths):
+                bt.logging.warning(f"UID {uid}: contains sequences that do not have the allowed CDR3 length for this round ({allowed_cdr3_length})")
+                continue
+
+        regions = extract_regions_from_chains(uid_chains)
+        post_chain_validity_checks[uid] = {
+            **pre_validated[uid],
+            "regions": regions,
+            "chains": uid_chains,
         }
 
-    # --- batch developability check across all nativeness-passing UIDs ---
-    if not post_nativeness:
+    # Tier 4: batch developability check across all surviving UIDs
+    if not post_chain_validity_checks:
         return {}
 
     all_dev_sequences = []
     uid_seq_counts = []
-    for uid, info in post_nativeness.items():
+    for uid, info in post_chain_validity_checks.items():
         seqs = info["sequences"]
         uid_seq_counts.append((uid, len(seqs)))
         all_dev_sequences.extend(seqs)
@@ -239,60 +232,43 @@ async def validate_nanobodies(
         bt.logging.warning(f"Batch developability analysis failed: {e}")
         return {}
 
-    # A TNP profile that failed to COMPUTE is not a developability verdict.
-    # DevelopabilityService returns {"passed": False, "reason": "Failed to
-    # compute TNP profile..."} when compute_tnp_profile_async returns nothing,
-    # and the rejection below cannot tell that apart from a sequence that was
-    # measured and found undevelopable -- so a transient fault on the validator
-    # side drops a miner's whole submission for the epoch.
-    #
-    # The failures are transient, so retrying the affected sequences once
-    # recovers most of them without weakening the gate: anything still failing
-    # afterwards is rejected exactly as before.
-    errored = [
-        index for index, result in enumerate(all_dev_results)
-        if _is_tnp_compute_error(result)
-    ]
-    if errored:
-        bt.logging.warning(
-            f"developability: {len(errored)} of {len(all_dev_results)} sequence(s) "
-            f"failed to compute a TNP profile; retrying those"
-        )
-        try:
-            retry_results = await analyze_developability(
-                [all_dev_sequences[index] for index in errored]
-            )
-        except Exception as e:
-            bt.logging.warning(f"developability retry failed: {e}")
-            retry_results = []
-        recovered = 0
-        for index, result in zip(errored, retry_results):
-            if not _is_tnp_compute_error(result):
-                all_dev_results[index] = result
-                recovered += 1
-        bt.logging.warning(
-            f"developability: recovered {recovered} of {len(errored)} after retry"
-        )
-
     valid_nanobodies_by_uid = {}
     offset = 0
     for uid, count in uid_seq_counts:
-        info = post_nativeness[uid]
+        info = post_chain_validity_checks[uid]
         developability_result = all_dev_results[offset : offset + count]
         offset += count
 
         bt.logging.debug(f"UID {uid}: developability results: {developability_result}")
-        rejected_sequences = [seq for seq, result in zip(info["sequences"], developability_result) if not result["passed"]]
+        rejected_sequences = [
+            seq for seq, result in zip(info["sequences"], developability_result)
+            if result.get("red_flags") or result.get("error")
+        ]
         if rejected_sequences:
             bt.logging.warning(f"UID {uid}: contains sequences that are not developable: {rejected_sequences}")
             continue
 
+        psh_strict_rejection = [(seq, result["surface_hydrophobic_patches"]) for seq, result in zip(info["sequences"], developability_result) if result["surface_hydrophobic_patches"] > config["psh_strict_rejection_threshold"]]
+        if psh_strict_rejection:
+            bt.logging.warning(
+                f"UID {uid}: contains sequences that are rejected by PSH strict rejection: {psh_strict_rejection}"
+            )
+            continue
+
+        aggrescan_rejections = [
+            (seq, reason)
+            for seq, result in zip(info["sequences"], developability_result)
+            if (reason := aggrescan_rejection(result))
+        ]
+        if aggrescan_rejections:
+            bt.logging.warning(
+                f"UID {uid}: contains sequences rejected by Aggrescan3D: {aggrescan_rejections}"
+            )
+            continue
+
         valid_nanobodies_by_uid[uid] = {
-            "sequences": info["sequences"],
-            "hashes": info["hashes"],
+            **info,
             "developability_result": developability_result,
-            "nativeness_result": info["nativeness_result"],
-            "similarity_results": info["similarity_results"],
         }
 
     return valid_nanobodies_by_uid
