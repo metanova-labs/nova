@@ -68,6 +68,8 @@ def load_config(path: str = "config/config.yaml"):
     # Load reaction filtering configuration
     reaction_config = config["reaction_filtering"]
     random_valid_reaction = reaction_config["random_valid_reaction"]
+    rxn_group_filtering = reaction_config["rxn_group_filtering"]
+    rxn_groups = [tuple(group) for group in reaction_config["rxn_groups"]]
     allowed_reactions = reaction_config["allowed_reactions"]
 
     return {
@@ -87,6 +89,8 @@ def load_config(path: str = "config/config.yaml"):
         'num_molecules': num_molecules,
         'min_entropy': min_entropy,
         'random_valid_reaction': random_valid_reaction,
+        'rxn_group_filtering': rxn_group_filtering,
+        'rxn_groups': rxn_groups,
         'allowed_reactions': allowed_reactions,
         'boltz_metric': boltz_metric,
         'combination_strategy': combination_strategy,
