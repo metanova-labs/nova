@@ -35,11 +35,11 @@ GITHUB_TOKEN="your_personal_access_token"
 # Parallel inference settings:
 # The values are illustrative, but should work for most machines 
 # you can use tools/calibrate_perf.py to get the most optimal values for you specific environment
-NOVA_BOLTZ_SHARDS=12
-NOVA_BOLTZ_GPUS=0,0,1,0,0,1,0,1,0,1,0,1
+NOVA_BOLTZ_SHARDS=6
+NOVA_BOLTZ_GPUS=0,0,0,0,0,0
 NOVA_BOLTZGEN_GPUS=1
 NOVA_BOLTZ_THREADS=1
-NOVA_MAX_CONCURRENT_TNP=16
+NOVA_MAX_CONCURRENT_TNP=8
 
 # GitHub configs - FOR MINERS
 GITHUB_REPO_NAME="repo-name"
@@ -55,6 +55,7 @@ AUTO_UPDATE="1" # Set to "0" to disable auto-updates (not recommended)
 3. Install dependencies:
    ```bash
    ./install_deps.sh [--cuda <version>] && source "$HOME/.local/bin/env"  #cuda version is optional, default is 12.6
+   export PATH="$HOME/.local/bin:$PATH"
    ```
 
 4. Run:
