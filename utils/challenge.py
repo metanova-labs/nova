@@ -31,8 +31,11 @@ def get_historical_submissions(target: str, entity_type: str, revision: str = No
 
 def get_challenge_params_from_blockhash(config: dict, block_hash: str, num_antitargets: int = 0) -> dict:
     """
-    Use block_hash as a seed to pick 'random_valid_reaction'. If num_antitargets > 0, also pick 'antitargets' random entries (out of use).
-    Returns {'small_molecule_target': ..., 'nanobody_target': ..., 'random_valid_reaction': ..., 'antitargets': [...], 'allowed_reaction': '...'}.
+    Use block_hash as a seed for epoch challenge parameters.
+    When random_valid_reaction is set and rxn_group_filtering is set, allowed_reaction is a list
+    with one id from each rxn_groups entry (seed % len(group)). Otherwise it is a single "rxn:N"
+    string (seed % total_reactions). If num_antitargets > 0, also pick that many antitargets.
+    Returns targets, optional antitargets, allowed_reaction, allowed_v, and allowed_cdr3_length.
     """
     if not (isinstance(block_hash, str) and block_hash.startswith("0x")):
         bt.logging.error("block_hash must start with '0x'.")
@@ -76,15 +79,31 @@ def get_challenge_params_from_blockhash(config: dict, block_hash: str, num_antit
         result["antitargets"] = antitargets
 
     if config["random_valid_reaction"]:
-        try:
-            from .reactions import get_total_reactions
-            total_reactions = get_total_reactions()
-            allowed_option = seed % total_reactions
-            result["allowed_reaction"] = f"rxn:{allowed_option + 1}"
-        except RuntimeError:
-            raise
-        except Exception as e:
-            bt.logging.warning(f"Failed to determine allowed reaction: {e}, defaulting to all reactions allowed")
+        if config["rxn_group_filtering"]:
+            try:
+                allowed_rxns = []
+                for group in config["rxn_groups"]:
+                    allowed_rxn_index = seed % len(group)
+                    allowed_rxns.append(f"rxn:{group[allowed_rxn_index]}")
+
+                if len(allowed_rxns) != 0:
+                    result["allowed_reaction"] = allowed_rxns
+                else:
+                    bt.logging.warning("Failed to determine allowed reaction. Defaulting to all reactions allowed")
+
+            except Exception as e:
+                bt.logging.warning(f"Failed to determine allowed reaction: {e}, defaulting to all reactions allowed")
+
+        else:
+            try:
+                from .reactions import get_total_reactions
+                total_reactions = get_total_reactions()
+                allowed_option = seed % total_reactions
+                result["allowed_reaction"] = f"rxn:{allowed_option + 1}"
+            except RuntimeError:
+                raise
+            except Exception as e:
+                bt.logging.warning(f"Failed to determine allowed reaction: {e}, defaulting to all reactions allowed")
 
     if config["v_neighborhood_categories"]:
         v_categories = config["v_neighborhood_categories"]

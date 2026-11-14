@@ -20,7 +20,7 @@ def validate_molecules_and_calculate_entropy(
     uid_to_data: dict[int, dict[str, list]],
     score_dict: dict[int, dict[str, list[list[float]]]],
     config: dict,
-    allowed_reaction: str = None
+    allowed_reaction: list[str] = None
 ) -> dict[int, dict[str, list[str]]]:
     """
     Validates molecules for all UIDs and calculates their fingerprint entropy.
@@ -85,12 +85,17 @@ def validate_molecules_and_calculate_entropy(
                     break
 
                 elif not config.get('random_valid_reaction'):
-                    allowed_ok = [is_reaction_allowed(molecule, reaction) for reaction in config.get('allowed_reactions')]
-                    if len(allowed_ok) == 0:
-                        bt.logging.error(f"random_valid_reaction is false but no allowed reactions are specified. Check config/config.yaml")
+                    allowed_reactions = config.get('allowed_reactions') or []
+                    if not allowed_reactions:
+                        bt.logging.error(
+                            "random_valid_reaction is false but no allowed reactions are specified. Check config/config.yaml"
+                        )
                         break
-                    if not any(allowed_ok):
-                        bt.logging.warning(f"UID={uid}: molecule='{molecule}' uses disallowed reaction for this epoch (only {config.get('allowed_reactions')} allowed)")
+                    if not is_reaction_allowed(molecule, allowed_reactions):
+                        bt.logging.warning(
+                            f"UID={uid}: molecule='{molecule}' uses disallowed reaction for this epoch "
+                            f"(only {allowed_reactions} allowed)"
+                        )
                         break
                 
                 smiles = get_smiles(molecule)

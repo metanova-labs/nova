@@ -18,7 +18,7 @@ Competitions last for **361 blocks** and run continuously. Miner submissions mus
    Each epoch, challenge parameters are derived from the **epoch start block hash** via the `get_challenge_params_from_blockhash()` function. This function returns:
    - `small_molecule_target`: protein(s) for small-molecule tasks (pulled from config)
    - `nanobody_target`: protein(s) for nanobody tasks (also pulled from config)
-   - `allowed_reaction`: when reaction filtering is on, small molecules need to comply with the single allowed reaction type for that epoch (e.g. `"rxn:3"`). Chosen as `seed % total_reactions`.
+   - `allowed_reaction`: when `random_valid_reaction` is true, the reaction ids a small molecule may use this epoch. With `rxn_group_filtering` true, this is a list containing one id from each `rxn_groups` entry, chosen as `seed % len(group)` from the integer block-hash seed. The current groups cover reaction ids 1–44 and produce three allowed reactions per epoch, and a submission may mix them. With `rxn_group_filtering` false, this is a single string (e.g. `"rxn:3"`) chosen as `seed % total_reactions`. When `random_valid_reaction` is false, the key is unset and molecules must use an id from `reaction_filtering.allowed_reactions`. Reaction selection does not consume the RNG used for the V-gene and CDR3 draws.
    - `allowed_v`: when `germline_filtering.v_neighborhood_categories` is set, one human V gene for the epoch. The same block hash seeds `random.Random`. A category is drawn first, then one gene from that category when it lists more than one. Current categories are `IGHV3-23`, `IGHV3-66`, `IGHV3-74`, and `IGHV3-7` / `IGHV3-11` / `IGHV3-43` / `IGHV3-48` / `IGHV3-53` / `IGHV3-64`.
    - `allowed_cdr3_length`: when `germline_filtering.cdr3_length_range` is set, one CDR3 length drawn from that inclusive range (currently 5–23) with the same RNG, after the V-gene draw.
 
@@ -82,13 +82,13 @@ Implemented in `neurons/validator/molecule_validity.validate_molecules_and_calcu
    Duplicate molecule strings in the same submission → invalid.
 
 3. **Reaction allowed (if configured)**  
-   If `config.random_valid_reaction` is true, each molecule must match the epoch’s `allowed_reaction` (e.g. `rxn:3`). Format: molecule starts with `rxn:` and the reaction ID must match. If any molecule uses a disallowed reaction, the whole submission is deemed invalid.
+   If `config.random_valid_reaction` is true, each molecule’s reaction id must be one of the epoch’s allowed reactions. With `rxn_group_filtering` true, `allowed_reaction` is a list (currently three ids, one from each `rxn_groups` entry). With it false, `allowed_reaction` is a single id such as `rxn:3`. The molecule must start with `rxn:` and the id after that prefix must be in the allowed set. If `random_valid_reaction` is false, the id must be one of `allowed_reactions` in `config/config.yaml`. One disallowed reaction invalidates the whole submission.
 
 4. **SMILES**  
    For each molecule, the validator derives SMILES via `get_smiles(molecule)`. If no valid SMILES is found for any molecule, the whole submission is invalid.
 
 5. **Molecular property filters**  
-   The parsed molecule must pass every filter in `utils/filters.py`, with thresholds from `molecule_requirements.filters` in `config/config.yaml`: heavy atoms 20-50, MW 100-700, HBD <= 5, HBA <= 10, logP <= 7, rotatable bonds 1-10, at least one ring, no macrocycles, element and functional-group limits (e.g. up to 2 Br; no metals, B, Si, Se, azide, isocyanide or allene), and shape/complexity limits. The first failing filter rejects the submission.
+   The parsed molecule must pass every filter in `utils/filters.py`, using the thresholds in `molecule_requirements.filters` in `config/config.yaml`. Current limits include heavy atoms 10–50, MW 100–700, HBD ≤ 5, HBA ≤ 10, logP ≤ 5.5, rotatable bonds 1–10, at least one ring and no ring larger than 7, no iodine, bromine, or phosphorus, at most 3 fluorines and 1 sulfur, and no metals, B, Si, Se, azide, isocyanide, or allene. The first failing filter rejects the submission.
 
 6. **Boltz-safe SMILES**  
    `is_boltz_safe_smiles(smiles)` must pass.
@@ -102,7 +102,7 @@ Implemented in `neurons/validator/molecule_validity.validate_molecules_and_calcu
 If all checks pass, the validator stores valid molecules for that UID and may compute **fingerprint entropy** when `num_molecules > 1`; entropy is currently a minimum value that needs to be obtained.
 
 **Takeaway for miners:**  
-Submit exactly the number of molecules required; ensure correct reaction type when filtering is on; ensure SMILES are valid and pass the property filters, and molecules are unique per target and not chemically duplicated.
+Submit exactly the number of molecules required; use only the epoch’s allowed reactions when filtering is on; ensure SMILES are valid and pass the property filters, and molecules are unique per target and not chemically duplicated.
 
 ---
 
@@ -178,7 +178,7 @@ From `config/config.yaml` and `config_loader.py`:
 | Parameter | Used in | Meaning |
 |-----------|--------|--------|
 | `small_molecule_target`, `nanobody_target` | Challenge + validity | Target proteins for the epoch and uniqueness checks. |
-| `random_valid_reaction`, `allowed_reaction` | Molecule validity | When true, only molecules with the epoch’s allowed reaction type are valid. |
+| `random_valid_reaction`, `rxn_group_filtering`, `rxn_groups`, `allowed_reactions` | Molecule validity | When `random_valid_reaction` is true, only the epoch’s `allowed_reaction` ids are valid: one id from each `rxn_groups` entry, or a single id when group filtering is off. When it is false, only `allowed_reactions` are valid. |
 | `filters` | Molecule validity | RDKit property filter thresholds (see `utils/filters.py`). |
 | `num_molecules`, `num_sequences` | Format + scoring | How many molecules/sequences to send and to score. |
 | `min_sequence_length`, `max_sequence_length` | Nanobody validity | Allowed nanobody length range. |
@@ -201,7 +201,7 @@ From `config/config.yaml` and `config_loader.py`:
 - **Validity:** Strict format (one `|`, no whitespace/non-ASCII), then molecule and nanobody rules above. One failure → no score for that UID for that type.
 - **Scoring:** Only valid submissions get Boltz/Boltzgen scores; validator aggregates to a final score per UID and selects the winner per type (with tie-breaking by block and time).
 
-Implementing miners should ensure: correct format, correct reaction type when applicable, and that all molecule and nanobody constraints (including uniqueness per target) are satisfied so that the submission is accepted and scored.
+Implementing miners should ensure: correct format, only the epoch’s allowed reactions when applicable, and that all molecule and nanobody constraints (including uniqueness per target) are satisfied so that the submission is accepted and scored.
 
 ---
 

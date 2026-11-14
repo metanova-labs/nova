@@ -233,7 +233,7 @@ Examples:
 ### 2. Challenge Parameters
 - Derives challenge parameters from the epoch start block hash via `get_challenge_params_from_blockhash()`:
   - Targets, from config
-  - Allowed reaction, when reaction filtering is enabled (`seed % total_reactions`)
+  - Allowed reactions, when reaction filtering is enabled. With `rxn_group_filtering`, one id is drawn from each `rxn_groups` entry (`seed % len(group)`). Otherwise one id is drawn as `seed % total_reactions`.
   - Allowed V gene, when `v_neighborhood_categories` is set: one category, then one gene from that category
   - Allowed CDR3 length, when `cdr3_length_range` is set: one length from the inclusive range, drawn after the V gene
   - `allowed_v` and `allowed_cdr3_length` are passed into `validate_nanobodies()`
@@ -301,7 +301,7 @@ All validators running share the scores they obtained via a dedicated API. This 
 ### Molecules
 - Must be valid SMILES strings (parsable by RDKit)
 - No duplicates within submission
-- Must pass reaction filter (if enabled)
+- Must use one of the epoch’s allowed reaction ids when `random_valid_reaction` is enabled (one id from each `rxn_groups` entry, or a single id when group filtering is off). When that flag is off, the id must be in `allowed_reactions`.
 - Must have valid chemical structure
 
 ### Nanobodies
