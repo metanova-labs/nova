@@ -4,12 +4,12 @@ protein_selection:
     target: "O15427" # if multiple targets, they should be comma separated
     clip_interval: [[1, 465]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
   nanobody:
-    target: "Q9NZQ7" # if multiple targets, they should be comma separated
-    clip_interval: [[17, 132]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
-    structure: "8AOK" # structure to use for scoring (PDB ID)
+    target: "P05231" # if multiple targets, they should be comma separated
+    clip_interval: [[27, 212]] # interval to clip sequence (0-based, exclude aas outside of this interval). If None, no clipping is done. One value for each target.
+    structure: "4O9H" # structure to use for scoring (PDB ID)
     structure_chain: "A" # chain to use for scoring (if multiple chains in structure)
-    structure_res_index: 1..115 # residue indices in structure to use for scoring
-    structure_binding_site: 37,39,41..44,46,49,51,56,59,94..96,98,100,104..108 # binding site residues to use for scoring
+    structure_res_index: 21..186 # residue indices in structure to use for scoring
+    structure_binding_site: 24,77,80,82,131,184..186 # binding site residues to use for scoring
 
 # Competition parameters
 competition:
